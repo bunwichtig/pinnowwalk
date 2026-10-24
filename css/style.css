@@ -1,0 +1,78 @@
+:root {
+  --panel: rgba(20, 26, 30, 0.86);
+  --text: #f1f3f2;
+  --muted: #b5bdbb;
+  --accent: #ff9b3d;
+  --line: rgba(255, 255, 255, 0.15);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: #9fc4e0; color: var(--text);
+  font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+#scene { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+.hidden { display: none !important; }
+button { font: inherit; color: var(--text); background: rgba(255,255,255,0.12); border: 1px solid var(--line);
+  border-radius: 8px; padding: 6px 10px; cursor: pointer; }
+button:hover { background: rgba(255,255,255,0.22); }
+button:disabled { opacity: 0.5; cursor: default; }
+button.on { background: var(--accent); color: #222; }
+.panel { position: fixed; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px;
+  backdrop-filter: blur(6px); z-index: 10; }
+.panel h1 { margin: 0 0 6px; font-size: 22px; }
+.panel h2 { margin: 0 0 10px; font-size: 16px; }
+.small { font-size: 12px; color: var(--muted); }
+kbd { display: inline-block; padding: 0 5px; margin: 0 1px; border: 1px solid var(--line); border-radius: 4px; font-size: 12px; }
+code { font-size: 12px; }
+
+#start { left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(440px, calc(100% - 32px)); text-align: center; }
+#start #help { text-align: left; color: var(--muted); }
+#start button { margin-top: 8px; padding: 10px 22px; font-size: 16px; background: var(--accent); color: #222; border: 0; }
+#loading { margin: 8px 0; color: var(--accent); }
+
+#hud { position: fixed; left: 12px; top: 10px; z-index: 5; pointer-events: none; text-shadow: 0 1px 3px #000; }
+#title { font-weight: 600; font-size: 16px; }
+#pos { font-size: 12px; color: #eee; }
+
+#toolbar { position: fixed; right: 12px; top: 10px; z-index: 6; display: flex; gap: 6px; }
+#toolbar button { background: var(--panel); }
+
+#minimap { position: fixed; right: 12px; bottom: 30px; width: 200px; height: 200px; z-index: 5; border-radius: 10px;
+  border: 1px solid var(--line); cursor: crosshair; }
+
+#photo-panel { right: 12px; top: 52px; width: min(300px, calc(100% - 24px)); max-height: calc(100% - 300px); overflow: auto; }
+#photo-list { list-style: none; margin: 0; padding: 0; }
+#photo-list li { display: flex; gap: 8px; align-items: center; padding: 6px; border-radius: 8px; cursor: pointer; }
+#photo-list li:hover { background: rgba(255,255,255,0.1); }
+#photo-list img { width: 56px; height: 42px; object-fit: cover; border-radius: 4px; }
+#photo-list .empty { color: var(--muted); cursor: default; }
+hr { border: 0; border-top: 1px solid var(--line); margin: 10px 0; }
+.filebtn { display: inline-block; padding: 6px 10px; border-radius: 8px; border: 1px dashed var(--accent); cursor: pointer; }
+.filebtn input { display: none; }
+
+#photo-edit { left: 12px; top: 60px; width: min(340px, calc(100% - 24px)); max-height: calc(100% - 80px); overflow: auto; }
+#pe-thumb { width: 100%; max-height: 140px; object-fit: contain; background: #000; border-radius: 6px; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 8px; }
+.grid label { display: flex; flex-direction: column; font-size: 12px; color: var(--muted); }
+.grid input, textarea { font: inherit; color: var(--text); background: rgba(0,0,0,0.35); border: 1px solid var(--line);
+  border-radius: 6px; padding: 4px 6px; width: 100%; }
+textarea { font: 11px/1.3 ui-monospace, monospace; margin-top: 8px; resize: vertical; }
+.row { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+
+#overlay { position: fixed; inset: 0; z-index: 4; pointer-events: none; }
+#overlay-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; opacity: 0.5; }
+#overlay-bar { position: absolute; left: 50%; bottom: 30px; transform: translateX(-50%); pointer-events: auto; display: flex;
+  gap: 12px; align-items: center; background: var(--panel); padding: 8px 12px; border-radius: 10px; max-width: calc(100% - 24px); }
+#overlay-bar label { display: flex; gap: 6px; align-items: center; font-size: 12px; }
+
+#joystick { position: fixed; left: 24px; bottom: 40px; width: 120px; height: 120px; border-radius: 50%;
+  border: 2px solid rgba(255,255,255,0.4); background: rgba(0,0,0,0.15); z-index: 5; display: none; touch-action: none; }
+#stick { position: absolute; left: 35px; top: 35px; width: 50px; height: 50px; border-radius: 50%; background: rgba(255,255,255,0.5); }
+body.touch #joystick { display: block; }
+
+#attribution { position: fixed; right: 12px; bottom: 6px; z-index: 5; font-size: 11px; color: #fff; text-shadow: 0 1px 2px #000; }
+#attribution a { color: #fff; }
+
+@media (max-width: 600px) {
+  #minimap { width: 120px; height: 120px; bottom: 26px; }
+  #toolbar button { padding: 6px 8px; }
+  #title { font-size: 14px; }
+}

@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Pinnow Walk</title>
+<link rel="stylesheet" href="css/style.css">
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.11.0/proj4.js"></script>
+</head>
+<body>
+<canvas id="scene"></canvas>
+
+<div id="hud">
+  <div id="title">Pinnow · Am See 89</div>
+  <div id="pos"></div>
+</div>
+
+<canvas id="minimap" width="200" height="200" title="Klick: dorthin springen"></canvas>
+
+<div id="toolbar">
+  <button id="btn-photos" title="Fotos">📷 Fotos</button>
+  <button id="btn-fly" title="Fliegen ein/aus (F)">🕊 Fliegen</button>
+  <button id="btn-home" title="Zurück zum Grundstück (H)">🏠</button>
+  <button id="btn-help" title="Hilfe">?</button>
+</div>
+
+<div id="photo-panel" class="panel hidden">
+  <h2>Fotos</h2>
+  <ul id="photo-list"></ul>
+  <hr>
+  <label class="filebtn">Eigenes Foto testen …
+    <input type="file" id="photo-file" accept="image/*">
+  </label>
+  <p class="small">Das Foto bleibt nur in diesem Browser. Zum Speichern den erzeugten Eintrag in <code>fotos/fotos.json</code> übernehmen.</p>
+</div>
+
+<div id="photo-edit" class="panel hidden">
+  <h2>Foto platzieren</h2>
+  <img id="pe-thumb" alt="">
+  <div class="grid">
+    <label>Breite <input id="pe-lat" type="number" step="0.000001"></label>
+    <label>Länge <input id="pe-lon" type="number" step="0.000001"></label>
+    <label>Richtung ° <input id="pe-dir" type="number" step="1" min="0" max="360"></label>
+    <label>Neigung ° <input id="pe-pitch" type="number" step="1" value="0"></label>
+    <label>Brennweite (KB) <input id="pe-focal" type="number" step="1" placeholder="z. B. 26"></label>
+    <label>Titel <input id="pe-title" type="text"></label>
+  </div>
+  <p id="pe-exif" class="small"></p>
+  <div class="row">
+    <button id="pe-here">Aktueller Standort</button>
+    <button id="pe-apply">Anzeigen</button>
+  </div>
+  <textarea id="pe-json" readonly rows="6"></textarea>
+  <div class="row">
+    <button id="pe-copy">Eintrag kopieren</button>
+    <button id="pe-close">Schließen</button>
+  </div>
+</div>
+
+<div id="overlay" class="hidden">
+  <img id="overlay-img" alt="">
+  <div id="overlay-bar">
+    <span id="overlay-title"></span>
+    <label>Deckkraft <input id="overlay-opacity" type="range" min="0" max="1" step="0.05" value="0.5"></label>
+    <button id="overlay-close">✕</button>
+  </div>
+</div>
+
+<div id="start" class="panel">
+  <h1>Pinnow · Am See 89</h1>
+  <p>Begehbares 3D-Modell aus offenen Geodaten.</p>
+  <div id="loading">Lade Daten …</div>
+  <div id="help">
+    <p><b>Computer:</b> Klicken, dann mit der Maus umsehen. <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> gehen, <kbd>Shift</kbd> rennen, <kbd>F</kbd> fliegen (<kbd>Leertaste</kbd>/<kbd>C</kbd> hoch/runter), <kbd>H</kbd> zum Grundstück, <kbd>Esc</kbd> Maus freigeben.</p>
+    <p><b>Handy/Tablet:</b> links ziehen = gehen, rechts ziehen = umsehen.</p>
+  </div>
+  <button id="btn-start" disabled>Losgehen</button>
+</div>
+
+<div id="joystick"><div id="stick"></div></div>
+<div id="attribution">Daten: © GeoBasis-DE/M-V 2026, <a href="https://www.geoportal-mv.de" target="_blank" rel="noopener">GeoPortal.MV</a> · 3D: three.js</div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

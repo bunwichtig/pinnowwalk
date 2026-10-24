@@ -1,0 +1,22 @@
+{
+ "crs": "EPSG:25833",
+ "origin": [
+  270900.0,
+  5944710.0
+ ],
+ "half": 600,
+ "base": 27.0,
+ "water": 0.78,
+ "terrain": {
+  "n": 601,
+  "step": 2,
+  "scale": 0.01
+ },
+ "house": {
+  "x": -2.81,
+  "z": -2.27,
+  "top": 15.47,
+  "label": "Am See 89"
+ },
+ "attribution": "© GeoBasis-DE/M-V 2026 (DGM1, nDOM, LoD2, DOP)"
+}
