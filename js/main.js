@@ -1,6 +1,5 @@
 import * as THREE from 'three';
 import { Sky } from 'three/addons/objects/Sky.js';
-import { readExif } from './exif.js';
 
 const EYE = 1.7;          // Augenhöhe in m
 const WALK = 4, RUN = 12, FLY = 25, FLY_FAST = 80;
@@ -9,8 +8,6 @@ const DEG = Math.PI / 180;
 const $ = (id) => document.getElementById(id);
 const isTouch = matchMedia('(pointer: coarse)').matches;
 if (isTouch) document.body.classList.add('touch');
-
-proj4.defs('EPSG:25833', '+proj=utm +zone=33 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs');
 
 // ---------- Renderer, Szene, Licht ----------
 const renderer = new THREE.WebGLRenderer({ canvas: $('scene'), antialias: true });
@@ -24,7 +21,6 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.2, 4000);
 camera.rotation.order = 'YXZ';
-const BASE_FOV = 70;
 
 const sun = new THREE.Vector3().setFromSphericalCoords(1, (90 - 38) * DEG, 200 * DEG);
 const sky = new Sky();
@@ -50,8 +46,6 @@ scene.add(sunLight, sunLight.target);
 // ---------- Daten laden ----------
 let meta, H, N, STEP, HALF;
 const footGrid = new Map();
-let photos = [];
-const markers = [];
 
 async function load() {
   const status = (t) => ($('loading').textContent = t);
@@ -83,12 +77,6 @@ async function load() {
   buildTrees(await (await fetch('data/trees.bin')).arrayBuffer());
   buildHouseLabel();
 
-  status('Lade Fotos …');
-  try {
-    photos = (await (await fetch('fotos/fotos.json', { cache: 'no-cache' })).json()).map((p) => ({ ...p, src: 'fotos/' + p.datei }));
-  } catch { photos = []; }
-  photos.forEach(addMarker);
-  renderPhotoList();
   initMinimap();
 
   status('');
@@ -284,7 +272,6 @@ function teleport(x, z, yaw, pitch, eye = EYE) {
 function headingDeg() { return ((-player.yaw / DEG) % 360 + 360) % 360; }
 
 addEventListener('keydown', (e) => {
-  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
   keys.add(e.code);
   if (e.code === 'KeyF') toggleFly();
   if (e.code === 'KeyH') goHome();
@@ -310,18 +297,16 @@ function look(dx, dy) {
   player.pitch = THREE.MathUtils.clamp(player.pitch - dy, -1.5, 1.5);
 }
 
-canvas.addEventListener('click', (e) => {
-  if (isTouch) return;
-  if (!locked) { canvas.requestPointerLock(); return; }
-  pickMarker(0, 0);
+canvas.addEventListener('click', () => {
+  if (!isTouch && !locked) canvas.requestPointerLock();
 });
 
-// Touch: linke Hälfte = Joystick, rechte Hälfte = umsehen, kurzes Tippen = Marker wählen
+// Touch: linke Hälfte = Joystick, rechte Hälfte = umsehen
 const touches = new Map();
 canvas.addEventListener('pointerdown', (e) => {
   if (e.pointerType !== 'touch') return;
   const left = e.clientX < innerWidth * 0.4;
-  touches.set(e.pointerId, { left, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY, t: performance.now() });
+  touches.set(e.pointerId, { left, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY });
 });
 canvas.addEventListener('pointermove', (e) => {
   const t = touches.get(e.pointerId);
@@ -340,8 +325,6 @@ const endTouch = (e) => {
   if (!t) return;
   touches.delete(e.pointerId);
   if (t.left) { joy.x = joy.y = 0; $('stick').style.transform = ''; }
-  if (Math.hypot(e.clientX - t.x0, e.clientY - t.y0) < 8 && performance.now() - t.t < 300)
-    pickMarker((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
 };
 canvas.addEventListener('pointerup', endTouch);
 canvas.addEventListener('pointercancel', endTouch);
@@ -390,111 +373,6 @@ function update(dt) {
     `${(p.y - EYE + meta.base).toFixed(1)} m ü. NHN · Blick ${Math.round(headingDeg())}°`;
 }
 
-// ---------- Fotos ----------
-const raycaster = new THREE.Raycaster();
-
-function photoLocal(p) {
-  if (p.ost != null && p.nord != null) return { x: p.ost - meta.origin[0], z: meta.origin[1] - p.nord };
-  const [e, n] = proj4('EPSG:4326', 'EPSG:25833', [p.lon, p.lat]);
-  return { x: e - meta.origin[0], z: meta.origin[1] - n };
-}
-
-function addMarker(p) {
-  const { x, z } = photoLocal(p);
-  p.x = x; p.z = z;
-  const eye = p.hoehe_ueber_boden ?? 1.6;
-  const g = new THREE.Group();
-  const mat = new THREE.MeshBasicMaterial({ color: 0xff9b3d });
-  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, eye).translate(0, eye / 2, 0), mat);
-  const cone = new THREE.Mesh(new THREE.ConeGeometry(0.5, 1.4, 16, 1, true).rotateX(-Math.PI / 2).translate(0, 0, -0.7),
-    new THREE.MeshBasicMaterial({ color: 0xff9b3d, transparent: true, opacity: 0.6, side: THREE.DoubleSide }));
-  cone.position.y = eye;
-  cone.rotation.x = (p.neigung ?? 0) * DEG;
-  const ball = new THREE.Mesh(new THREE.SphereGeometry(0.35, 16, 12), mat);
-  ball.position.y = eye + 0.9;
-  g.add(pole, cone, ball);
-  g.position.set(x, heightAt(x, z), z);
-  g.rotation.y = -(p.richtung ?? 0) * DEG;
-  g.userData.photo = p;
-  scene.add(g);
-  markers.push(g);
-  p.marker = g;
-}
-
-function removeMarker(p) {
-  if (!p.marker) return;
-  scene.remove(p.marker);
-  markers.splice(markers.indexOf(p.marker), 1);
-  p.marker = null;
-}
-
-function pickMarker(nx, ny) {
-  raycaster.setFromCamera(new THREE.Vector2(nx, ny), camera);
-  const hit = raycaster.intersectObjects(markers, true)[0];
-  if (!hit) return;
-  let o = hit.object;
-  while (!o.userData.photo) o = o.parent;
-  showPhoto(o.userData.photo);
-}
-
-let activePhoto = null;
-function showPhoto(p) {
-  activePhoto = p;
-  const eye = p.hoehe_ueber_boden ?? 1.6;
-  if (player.fly) toggleFly();
-  teleport(p.x, p.z, -(p.richtung ?? 0) * DEG, (p.neigung ?? 0) * DEG, eye);
-  const img = $('overlay-img');
-  img.onload = () => fitFov(p, img.naturalWidth, img.naturalHeight);
-  img.src = p.src;
-  $('overlay-title').textContent = p.titel || p.datei || 'Foto';
-  $('overlay').classList.remove('hidden');
-  if (p.marker) p.marker.visible = false;
-}
-
-// Kamera-Öffnungswinkel an das Foto anpassen (aus der Kleinbild-Brennweite)
-function fitFov(p, w, h) {
-  const f = p.brennweite;
-  if (!f) return;
-  const halfDiag = Math.atan(21.633 / f);
-  const diag = Math.hypot(w, h);
-  const vf = 2 * Math.atan(Math.tan(halfDiag) * h / diag);
-  const hf = 2 * Math.atan(Math.tan(halfDiag) * w / diag);
-  const view = innerWidth / innerHeight;
-  camera.fov = (w / h > view ? 2 * Math.atan(Math.tan(hf / 2) / view) : vf) / DEG;
-  camera.updateProjectionMatrix();
-}
-
-function closePhoto() {
-  $('overlay').classList.add('hidden');
-  if (activePhoto?.marker) activePhoto.marker.visible = true;
-  activePhoto = null;
-  camera.fov = BASE_FOV;
-  camera.updateProjectionMatrix();
-}
-$('overlay-close').onclick = closePhoto;
-$('overlay-opacity').oninput = (e) => ($('overlay-img').style.opacity = e.target.value);
-addEventListener('keydown', (e) => { if (e.code === 'Escape' && activePhoto && !locked) closePhoto(); });
-
-function renderPhotoList() {
-  const ul = $('photo-list');
-  ul.innerHTML = '';
-  if (!photos.length) {
-    ul.innerHTML = '<li class="empty">Noch keine Fotos in fotos/fotos.json.</li>';
-    return;
-  }
-  for (const p of photos) {
-    const li = document.createElement('li');
-    const img = document.createElement('img');
-    img.src = p.src; img.alt = '';
-    const span = document.createElement('span');
-    span.textContent = `${p.titel || p.datei} · ${Math.round(p.richtung ?? 0)}°`;
-    li.append(img, span);
-    li.onclick = () => { $('photo-panel').classList.add('hidden'); showPhoto(p); };
-    ul.append(li);
-  }
-}
-
-$('btn-photos').onclick = () => $('photo-panel').classList.toggle('hidden');
 $('btn-fly').onclick = toggleFly;
 $('btn-home').onclick = goHome;
 $('btn-help').onclick = () => { $('start').classList.remove('hidden'); document.exitPointerLock?.(); };
@@ -502,82 +380,6 @@ $('btn-start').onclick = () => {
   $('start').classList.add('hidden');
   if (!isTouch) canvas.requestPointerLock();
 };
-
-// Eigenes Foto ausprobieren: EXIF lesen, platzieren, Eintrag für fotos.json erzeugen
-let draft = null;
-$('photo-file').onchange = async (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-  const ex = readExif(await file.arrayBuffer()) || {};
-  if (draft) removeMarker(draft);
-  draft = { datei: file.name, titel: file.name.replace(/\.[^.]+$/, ''), src: URL.createObjectURL(file) };
-  $('pe-thumb').src = draft.src;
-  $('pe-lat').value = ex.lat?.toFixed(6) ?? '';
-  $('pe-lon').value = ex.lon?.toFixed(6) ?? '';
-  $('pe-dir').value = ex.direction != null ? Math.round(ex.direction) : '';
-  $('pe-focal').value = ex.focal35 ?? '';
-  $('pe-pitch').value = 0;
-  $('pe-title').value = draft.titel;
-  if (ex.date) draft.datum = ex.date;
-  const found = [ex.lat != null ? 'GPS-Position' : null, ex.direction != null ? `Blickrichtung (${ex.directionRef === 'M' ? 'magnetisch' : 'geografisch'} Nord)` : null,
-    ex.focal35 ? 'Brennweite' : null, ex.date ? 'Datum ' + ex.date : null].filter(Boolean);
-  $('pe-exif').textContent = found.length
-    ? 'Aus dem Foto gelesen: ' + found.join(', ') + '.' + (ex.lat == null ? ' Keine GPS-Position: zum Aufnahmeort gehen und „Aktueller Standort“ drücken.' : '')
-    : 'Keine Metadaten im Foto. Zum Aufnahmeort gehen, in Blickrichtung drehen und „Aktueller Standort“ drücken.';
-  $('photo-panel').classList.add('hidden');
-  $('photo-edit').classList.remove('hidden');
-  document.exitPointerLock?.();
-  if (ex.lat != null) applyDraft();
-  else updateJson();
-};
-
-function readDraft() {
-  Object.assign(draft, {
-    titel: $('pe-title').value,
-    lat: parseFloat($('pe-lat').value), lon: parseFloat($('pe-lon').value),
-    richtung: parseFloat($('pe-dir').value) || 0,
-    neigung: parseFloat($('pe-pitch').value) || 0,
-  });
-  const f = parseFloat($('pe-focal').value);
-  if (f) draft.brennweite = f; else delete draft.brennweite;
-}
-
-function updateJson() {
-  const { datei, titel, lat, lon, richtung, neigung, brennweite, datum } = draft;
-  const entry = { datei, titel, lat: +(+lat).toFixed(6), lon: +(+lon).toFixed(6), richtung: Math.round(richtung ?? 0), neigung: Math.round(neigung ?? 0) };
-  if (brennweite) entry.brennweite = brennweite;
-  if (datum) entry.datum = datum;
-  $('pe-json').value = JSON.stringify(entry, null, 2);
-}
-
-function applyDraft() {
-  readDraft();
-  if (!isFinite(draft.lat) || !isFinite(draft.lon)) { updateJson(); return; }
-  removeMarker(draft);
-  addMarker(draft);
-  updateJson();
-  showPhoto(draft);
-}
-$('pe-apply').onclick = applyDraft;
-$('pe-here').onclick = () => {
-  const p = player.pos;
-  const [lon, lat] = proj4('EPSG:25833', 'EPSG:4326', [meta.origin[0] + p.x, meta.origin[1] - p.z]);
-  $('pe-lat').value = lat.toFixed(6);
-  $('pe-lon').value = lon.toFixed(6);
-  $('pe-dir').value = Math.round(headingDeg());
-  $('pe-pitch').value = Math.round(player.pitch / DEG);
-  readDraft();
-  removeMarker(draft);
-  addMarker(draft);
-  if (activePhoto === draft) draft.marker.visible = false;
-  updateJson();
-};
-$('pe-copy').onclick = async () => {
-  try { await navigator.clipboard.writeText($('pe-json').value); $('pe-copy').textContent = 'Kopiert ✓'; }
-  catch { $('pe-json').select(); }
-  setTimeout(() => ($('pe-copy').textContent = 'Eintrag kopieren'), 1500);
-};
-$('pe-close').onclick = () => $('photo-edit').classList.add('hidden');
 
 // ---------- Übersichtskarte ----------
 const mini = $('minimap'), mctx = mini.getContext('2d');
@@ -596,8 +398,6 @@ function drawMinimap() {
   const s = mini.width;
   if (miniImg.complete && miniImg.naturalWidth) mctx.drawImage(miniImg, 0, 0, s, s);
   const k = s / (2 * HALF), toM = (v) => (v + HALF) * k;
-  mctx.fillStyle = '#ff9b3d';
-  for (const m of markers) { mctx.beginPath(); mctx.arc(toM(m.position.x), toM(m.position.z), 3, 0, 7); mctx.fill(); }
   const px = toM(player.pos.x), pz = toM(player.pos.z);
   mctx.save();
   mctx.translate(px, pz);
@@ -613,7 +413,6 @@ addEventListener('resize', () => {
   renderer.setSize(innerWidth, innerHeight);
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
-  if (activePhoto) fitFov(activePhoto, $('overlay-img').naturalWidth, $('overlay-img').naturalHeight);
 });
 
 const clock = new THREE.Clock();
@@ -626,7 +425,7 @@ renderer.setAnimationLoop(() => {
 });
 
 // für Tests und die Browser-Konsole
-window.pinnow = { player, teleport, goHome, heightAt, showPhoto };
+window.pinnow = { player, teleport, goHome, heightAt };
 
 load().catch((err) => {
   console.error(err);

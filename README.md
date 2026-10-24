@@ -9,43 +9,15 @@ Ausschnitt 1,2 km × 1,2 km um das Grundstück, mit Gelände, Luftbild, allen 3D
 - **Computer:** ins Bild klicken, Maus = umsehen, `W A S D` = gehen, `Shift` = rennen, `Leertaste` = springen,
   `F` = fliegen (dann `Leertaste`/`C` hoch/runter), `H` = zurück zum Grundstück, `Esc` = Maus freigeben.
   Klick auf die Übersichtskarte springt an diese Stelle.
-- **Handy/Tablet:** linke Bildschirmseite ziehen = gehen, rechte Seite ziehen = umsehen, Marker antippen = Foto.
+- **Handy/Tablet:** linke Bildschirmseite ziehen = gehen, rechte Seite ziehen = umsehen.
 
-## Fotos einbinden
-1. Foto (Original vom Handy, nicht über Messenger weitergeleitet) in den Ordner `fotos/` hochladen.
-2. Einen Eintrag in `fotos/fotos.json` ergänzen:
-
-```json
-[
-  {
-    "datei": "IMG_1234.jpg",
-    "titel": "Blick vom Steg",
-    "lat": 53.601040,
-    "lon": 11.537295,
-    "richtung": 290,
-    "neigung": 0,
-    "brennweite": 26
-  }
-]
-```
-
-| Feld | Bedeutung |
-|---|---|
-| `lat`, `lon` | Aufnahmeort (Breite/Länge, WGS84). Alternativ `ost`/`nord` in UTM 33 (EPSG:25833). |
-| `richtung` | Blickrichtung in Grad: 0 = Nord, 90 = Ost, 180 = Süd, 270 = West |
-| `neigung` | optional, Grad nach oben (+) oder unten (−) |
-| `brennweite` | optional, Kleinbild-Brennweite in mm (Handy meist 24–28), passt den Bildwinkel an |
-| `hoehe_ueber_boden` | optional, Kamerahöhe in m (Standard 1,6) |
-
-Einfacher geht es auf der Seite selbst: **📷 Fotos → Eigenes Foto testen**. Die Seite liest GPS und Blickrichtung
-aus dem Foto, zeigt es halbtransparent über dem Modell und erzeugt den fertigen Eintrag zum Kopieren.
-Fehlen die Daten, im Modell an den Aufnahmeort gehen, so drehen, dass Foto und Modell übereinander passen,
-und **Aktueller Standort** drücken.
-
-Hinweis: Das Repository und die Seite sind öffentlich. Fotos mit erkennbaren Personen oder Kennzeichen vorher unkenntlich machen.
+## Eigene Fotos
+Eigene Fotos und Videos dienen nur als Vorlage, um das Modell realistischer zu machen (Fassaden, fehlende Objekte,
+Baumarten, ggf. Fotogrammetrie). Sie werden **nicht** auf der Seite gezeigt und **nicht** in dieses öffentliche
+Repository hochgeladen. Hier landen nur daraus abgeleitete Texturen und Modelle, ohne Personen.
 
 ## Technik
-- HTML, CSS, JavaScript; 3D mit [three.js](https://threejs.org) (MIT), Koordinaten mit [proj4js](https://proj4js.org) (MIT).
+- HTML, CSS, JavaScript; 3D mit [three.js](https://threejs.org) (MIT).
   Keine Installation, kein Server nötig: GitHub Pages liefert die Dateien direkt aus.
 - `tools/build_data.py` (Python) lädt die Geodaten und erzeugt die Dateien in `data/`:
 
