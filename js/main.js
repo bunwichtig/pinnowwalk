@@ -50,29 +50,29 @@ const footGrid = new Map();
 async function load() {
   const status = (t) => ($('loading').textContent = t);
   status('Lade Geländedaten …');
-  meta = await (await fetch('data/meta.json')).json();
+  meta = await (await fetch('data/meta.json', { cache: 'no-cache' })).json();
   ({ n: N, step: STEP } = meta.terrain);
   HALF = meta.half;
-  const tb = await (await fetch('data/terrain.bin')).arrayBuffer();
+  const tb = await (await fetch('data/terrain.bin', { cache: 'no-cache' })).arrayBuffer();
   const raw = new Uint16Array(tb);
   H = new Float32Array(raw.length);
   for (let i = 0; i < raw.length; i++) H[i] = raw[i] * meta.terrain.scale;
 
   status('Lade Bodenkarte …');
-  const ground = await new THREE.TextureLoader().loadAsync('data/ground.png');
+  const ground = await new THREE.TextureLoader().loadAsync('data/ground.png?v=5');
   buildTerrain(ground);
   buildJetties(meta.jetties || []);
 
   status('Lade Gebäude …');
   const [bb, fp] = await Promise.all([
-    fetch('data/buildings.bin').then((r) => r.arrayBuffer()),
-    fetch('data/footprints.json').then((r) => r.json()),
+    fetch('data/buildings.bin', { cache: 'no-cache' }).then((r) => r.arrayBuffer()),
+    fetch('data/footprints.json', { cache: 'no-cache' }).then((r) => r.json()),
   ]);
   buildBuildings(bb, meta.buildings);
   indexFootprints(fp);
 
   status('Lade Bäume …');
-  buildTrees(await (await fetch('data/trees.bin')).arrayBuffer());
+  buildTrees(await (await fetch('data/trees.bin', { cache: 'no-cache' })).arrayBuffer());
   buildHouseLabel();
 
   initMinimap();
@@ -240,7 +240,7 @@ function buildJetties(list) {
   });
   const deckMat = new THREE.MeshLambertMaterial({ map: wood });
   const postMat = new THREE.MeshLambertMaterial({ color: 0x5a4a3a });
-  for (const { land, see, width } of list) {
+  for (const { land, see, width, ours } of list) {
     const [x0, z0] = land, [x1, z1] = see;
     const len = Math.hypot(x1 - x0, z1 - z0) + 2;
     const yaw = Math.atan2(x1 - x0, z1 - z0);
@@ -261,6 +261,28 @@ function buildJetties(list) {
         scene.add(post);
       }
     jettyDecks.push({ x0, z0, x1, z1, width, y: y + 0.04 });
+    if (ours) {
+      // Badeleiter am Seeende, wie auf dem Foto, und ein Schild
+      const lad = new THREE.Group();
+      const steel = new THREE.MeshLambertMaterial({ color: 0xb8bcc0 });
+      for (const sx of [-0.25, 0.25]) {
+        const rail = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 2.2), steel);
+        rail.position.set(sx, -0.4, 0);
+        lad.add(rail);
+      }
+      for (let k = 0; k < 4; k++) {
+        const rung = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.03, 0.06), steel);
+        rung.position.set(0, -1.2 + k * 0.35, 0);
+        lad.add(rung);
+      }
+      lad.position.set(x1 + Math.cos(yaw) * (width / 2 + 0.1), y + 0.3, z1 - Math.sin(yaw) * (width / 2 + 0.1));
+      lad.rotation.y = yaw + Math.PI / 2;
+      scene.add(lad);
+      const sign = makeLabel('Unser Steg', '#ffcf8a');
+      sign.scale.set(5, 1.25, 1);
+      sign.position.set(x1, y + 3, z1);
+      scene.add(sign);
+    }
   }
 }
 

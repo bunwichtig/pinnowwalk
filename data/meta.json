@@ -50,7 +50,8 @@
     26.7,
     -122.5
    ],
-   "width": 1.3
+   "width": 1.3,
+   "ours": false
   },
   {
    "land": [
@@ -61,7 +62,8 @@
     21.3,
     -110.0
    ],
-   "width": 1.3
+   "width": 1.3,
+   "ours": false
   },
   {
    "land": [
@@ -72,7 +74,8 @@
     -2.0,
     -81.9
    ],
-   "width": 1.3
+   "width": 1.3,
+   "ours": false
   },
   {
    "land": [
@@ -83,7 +86,8 @@
     -34.5,
     -41.0
    ],
-   "width": 1.3
+   "width": 1.3,
+   "ours": true
   },
   {
    "land": [
@@ -94,7 +98,8 @@
     -67.0,
     -24.0
    ],
-   "width": 1.3
+   "width": 1.3,
+   "ours": false
   },
   {
    "land": [
@@ -105,7 +110,8 @@
     -90.0,
     15.0
    ],
-   "width": 1.3
+   "width": 1.3,
+   "ours": false
   },
   {
    "land": [
@@ -116,7 +122,8 @@
     -110.0,
     83.0
    ],
-   "width": 1.3
+   "width": 1.3,
+   "ours": false
   }
  ],
  "house": {

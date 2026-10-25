@@ -311,6 +311,7 @@ def build_roads(osm_xml, out):
 JETTIES = [((37.6, -117.1), (26.7, -122.5)), ((29.1, -104.0), (21.3, -110.0)), ((8.8, -74.0), (-2.0, -81.9)),
            ((-26.7, -35.0), (-34.5, -41.0)), ((-60.0, -18.0), (-67.0, -24.0)), ((-84.0, 17.3), (-90.0, 15.0)),
            ((-103.0, 85.0), (-110.0, 83.0))]
+OUR_JETTY = 3  # dem GPS des Fotos vom eigenen Steg am naechsten
 
 
 def build_ground(dop, ndom, footprints, roads_path, out):
@@ -383,7 +384,7 @@ def main():
         "walk_radius": 100,
         "terrain": {"n": n, "step": STEP, "scale": 0.01},
         "buildings": bindex,
-        "jetties": [{"land": list(l), "see": list(w), "width": 1.3} for l, w in JETTIES],
+        "jetties": [{"land": list(l), "see": list(w), "width": 1.3, "ours": k == OUR_JETTY} for k, (l, w) in enumerate(JETTIES)],
         "house": dict(house or {"x": HOUSE_E - E0, "z": N0 - HOUSE_N, "top": None}, label="Grundstück"),
         "attribution": "© GeoBasis-DE/M-V 2026 (DGM1, nDOM, LoD2, DOP); Wege © OpenStreetMap-Mitwirkende (ODbL)",
     }
