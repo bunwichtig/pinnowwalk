@@ -22,7 +22,7 @@ import mapbox_earcut as earcut
 import numpy as np
 import tifffile
 from lxml import etree
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFilter
 
 # Ursprung des lokalen Koordinatensystems (ETRS89 / UTM 33N, EPSG:25833), nahe Am See 89
 E0, N0 = 270799.0, 5944835.0  # Grundstueck (Google-Maps-Pin des Nutzers, 53.602123 N 11.535708 O)
@@ -41,6 +41,7 @@ URLS = {
     "dgm": "https://www.geodaten-mv.de/dienste/dgm_download?index=4&dataset=ca268792-s2q1-4a39-b34c-9ec5bf9a4469&file=dgm1_{t}_gtiff.tif",
     "ndom": "https://www.geodaten-mv.de/dienste/ndom_download?index=0&dataset=66b85dc1-404c-4fab-b652-d2501962912c&file=ndom_{t}_gtiff.tif",
     "lod2": "https://www.geodaten-mv.de/dienste/gebaeude_download?index=0&dataset=8397b554-5cb9-4274-8be8-c20490d9a6e8&file=lod2_{t}_gml.zip",
+    "osm": "https://api.openstreetmap.org/api/0.6/map?bbox={w},{s},{e},{n}",
     "dop": "https://www.geodaten-mv.de/dienste/adv_dop?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=mv_dop&STYLES="
            "&CRS=EPSG:25833&BBOX={x0},{y0},{x1},{y1}&WIDTH={px}&HEIGHT={px}&FORMAT=image/png",
 }
@@ -283,6 +284,68 @@ def build_trees(ndom, footprints, out):
     print("Baeume", len(arr))
 
 
+ROAD_WIDTH = {"residential": 4.0, "unclassified": 4.0, "service": 3.0, "track": 2.5, "living_street": 3.5,
+              "footway": 1.2, "path": 1.0, "steps": 1.2}
+
+
+def build_roads(osm_xml, out):
+    from pyproj import Transformer
+    tr = Transformer.from_crs(4326, 25833, always_xy=True)
+    root = etree.fromstring(osm_xml)
+    nodes = {nd.get("id"): tr.transform(float(nd.get("lon")), float(nd.get("lat"))) for nd in root.iter("node")}
+    roads = []
+    for way in root.iter("way"):
+        tags = {t.get("k"): t.get("v") for t in way.iter("tag")}
+        if tags.get("highway") not in ROAD_WIDTH:
+            continue
+        pts = [nodes[r.get("ref")] for r in way.iter("nd") if r.get("ref") in nodes]
+        loc = [[round(e - E0, 2), round(N0 - n, 2)] for e, n in pts]
+        if len(loc) >= 2:
+            roads.append({"w": ROAD_WIDTH[tags["highway"]], "pts": loc})
+    with open(os.path.join(out, "roads.json"), "w") as f:
+        json.dump(roads, f, separators=(",", ":"))
+    print("Wege", len(roads))
+
+
+# Stege, aus dem Luftbild abgelesen (lokale Koordinaten: Landseite -> Seeende)
+JETTIES = [((37.6, -117.1), (26.7, -122.5)), ((29.1, -104.0), (21.3, -110.0)), ((8.8, -74.0), (-2.0, -81.9)),
+           ((-26.7, -35.0), (-34.5, -41.0)), ((-60.0, -18.0), (-67.0, -24.0)), ((-84.0, 17.3), (-90.0, 15.0)),
+           ((-103.0, 85.0), (-110.0, 83.0))]
+
+
+def build_ground(dop, ndom, footprints, roads_path, out):
+    """Bodenarten als Gewichtskarte (R = Rasen, G = Waldboden mit Nadeln, B = Sand/Weg), 0,5 m pro Pixel.
+    Ufer und Wasser ergeben sich im Browser aus der Hoehe."""
+    res = 0.5
+    n = int(2 * HALF / res)
+    # Waldboden unter Baumkronen (nDOM > 4 m)
+    r0, c0 = int(TILE_N - (N0 + HALF)), int(E0 - HALF - TILE_E)
+    a = ndom[r0:r0 + 2 * HALF, c0:c0 + 2 * HALF].astype(np.float32)
+    a[~np.isfinite(a) | (a > 100)] = 0
+    canopy = Image.fromarray(((a > 4) * 255).astype(np.uint8)).resize((n, n), Image.BILINEAR)
+    forest = np.asarray(canopy, np.float32) / 255
+    # Sand: OSM-Wege plus helle, wenig gruene Stellen im Luftbild
+    road = Image.new("L", (n, n), 0)
+    d = ImageDraw.Draw(road)
+    with open(roads_path) as f:
+        for r in json.load(f):
+            pts = [((x + HALF) / res, (z + HALF) / res) for x, z in r["pts"]]
+            d.line(pts, fill=255, width=max(2, int((r["w"] + 1.5) / res)), joint="curve")
+    road = np.asarray(road, np.float32) / 255
+    img = np.asarray(Image.fromarray(dop).resize((n, n), Image.BILINEAR), np.float32)
+    R, G, B = img[..., 0], img[..., 1], img[..., 2]
+    bright = (R + G + B) / 3
+    greenness = G - (R + B) / 2
+    bare = np.clip((bright - 105) / 35, 0, 1) * np.clip((10 - greenness) / 12, 0, 1)
+    sand = np.maximum(road, bare * 0.8)
+    forest = forest * (1 - sand)
+    grass = np.clip(1 - forest - sand, 0, 1)
+    rgb = np.stack([grass, forest, sand], -1)
+    im = Image.fromarray((rgb * 255).astype(np.uint8)).filter(ImageFilter.BoxBlur(2))
+    im.save(os.path.join(out, "ground.png"), optimize=True)
+    print("Bodenkarte", n, "x", n, "Anteile Rasen/Wald/Sand", rgb.reshape(-1, 3).mean(0).round(2))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--cache", default=os.path.join(os.path.dirname(__file__), "cache"))
@@ -295,22 +358,34 @@ def main():
     ndom = tifffile.imread(fetch(URLS["ndom"].format(t=TILE), os.path.join(a.cache, "ndom.tif")))
     lod2 = fetch(URLS["lod2"].format(t=TILE), os.path.join(a.cache, "lod2.zip"))
     dop = fetch(URLS["dop"].format(x0=E0 - HALF, y0=N0 - HALF, x1=E0 + HALF, y1=N0 + HALF, px=DOP_PX),
-                os.path.join(a.cache, "dop_%d_%d.png" % (HALF, DOP_PX)))
+                os.path.join(a.cache, "dop_%d_%d_%d_%d.png" % (E0, N0, HALF, DOP_PX)))
+
+    from pyproj import Transformer
+    tr = Transformer.from_crs(25833, 4326, always_xy=True)
+    w_, s_ = tr.transform(E0 - HALF, N0 - HALF)
+    e_, n_ = tr.transform(E0 + HALF, N0 + HALF)
+    osm = fetch(URLS["osm"].format(w=round(w_, 5), s=round(s_, 5), e=round(e_, 5), n=round(n_, 5)),
+                os.path.join(a.cache, "osm_%d_%d_%d.xml" % (E0, N0, HALF)))
 
     n = build_terrain(dgm, a.out)
+    terrain = (np.fromfile(os.path.join(a.out, "terrain.bin"), "<u2").reshape(n, n) / 100.0)
+    with open(osm, "rb") as f:
+        build_roads(f.read(), a.out)
     dop_img = build_dop(dop, a.out)
     with zipfile.ZipFile(lod2) as z:
         gml = z.read([nm for nm in z.namelist() if nm.lower().endswith(".gml")][0])
     footprints, house, bindex = build_buildings(gml, dop_img, a.out)
     build_trees(ndom, footprints, a.out)
+    build_ground(dop_img, ndom, footprints, os.path.join(a.out, "roads.json"), a.out)
 
     meta = {
         "crs": "EPSG:25833", "origin": [E0, N0], "half": HALF, "base": BASE, "water": round(WATER - BASE, 2),
         "walk_radius": 100,
         "terrain": {"n": n, "step": STEP, "scale": 0.01},
         "buildings": bindex,
+        "jetties": [{"land": list(l), "see": list(w), "width": 1.3} for l, w in JETTIES],
         "house": dict(house or {"x": HOUSE_E - E0, "z": N0 - HOUSE_N, "top": None}, label="Grundstück"),
-        "attribution": "© GeoBasis-DE/M-V 2026 (DGM1, nDOM, LoD2, DOP)",
+        "attribution": "© GeoBasis-DE/M-V 2026 (DGM1, nDOM, LoD2, DOP); Wege © OpenStreetMap-Mitwirkende (ODbL)",
     }
     with open(os.path.join(a.out, "meta.json"), "w") as f:
         json.dump(meta, f, indent=1, ensure_ascii=False)

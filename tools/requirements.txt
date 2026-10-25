@@ -4,3 +4,4 @@ imagecodecs
 lxml
 pillow
 mapbox-earcut
+pyproj

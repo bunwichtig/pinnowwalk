@@ -1,7 +1,7 @@
 # Pinnow Walk
 
 Begehbares 3D-Modell der Landschaft rund um **Am See 89, 19065 Pinnow (OT Godern)** im Browser.
-Begehbar sind 100 m rund um das Grundstück: Gelände, Luftbild, 3D-Gebäude mit gezeichneten Fassaden (Putz, Klinker, Holz, Fenster, Dachziegel in der Dachfarbe aus dem Luftbild) und sinnbildliche Bäume.
+Begehbar sind 100 m rund um das Grundstück: Gelände mit gezeichnetem Boden (Rasen, Sandweg, Waldboden mit Kiefernnadeln, Ufer), Stege, 3D-Gebäude mit gezeichneten Fassaden (Putz, Klinker, Holz, Fenster, Dachziegel in der Dachfarbe aus dem Luftbild) und sinnbildliche Bäume.
 
 **Aufruf:** https://bunwichtig.github.io/pinnowwalk/ (sobald GitHub Pages eingeschaltet ist)
 
@@ -24,7 +24,9 @@ Repository hochgeladen. Hier landen nur daraus abgeleitete Texturen und Modelle,
 | Datei | Inhalt |
 |---|---|
 | `terrain.bin` | Geländehöhen aus DGM1, 1-m-Raster, 261 × 261 Werte (Uint16, cm über 27 m NHN) |
-| `dop.jpg` | Luftbild (DOP, ca. 13 cm/Pixel) als Bodentextur; daraus auch die Dachfarben |
+| `dop.jpg` | Luftbild (DOP, ca. 13 cm/Pixel) für die Übersichtskarte; daraus auch Dachfarben und Bodenarten |
+| `ground.png` | Bodenkarte (R = Rasen, G = Waldboden, B = Sand), 0,5 m/Pixel, aus nDOM, Luftbild und OSM-Wegen |
+| `roads.json` | Wege aus OpenStreetMap |
 | `buildings.bin` | LoD2-Gebäude als Dreiecke mit Texturkoordinaten und Farbe, nach Fassadenart gruppiert |
 | `footprints.json` | Gebäudegrundrisse, damit man nicht durch Wände läuft |
 | `trees.bin` | Sinnbildliche Bäume: hohe Bäume aus dem nDOM, mindestens 9 m Abstand |
@@ -35,4 +37,4 @@ Neu erzeugen: `pip install -r tools/requirements.txt && python3 tools/build_data
 Geobasisdaten des Landesamts für innere Verwaltung M-V (LAiV), frei nutzbar mit Quellenvermerk:
 **© GeoBasis-DE/M-V 2026** – DGM1, nDOM, LoD2-Gebäude, Digitale Orthophotos. Bezug über
 [GeoPortal.MV](https://www.geoportal-mv.de) bzw. die Downloaddienste auf www.geodaten-mv.de.
-Adresse gefunden über © OpenStreetMap-Mitwirkende (Nominatim).
+Wege: © OpenStreetMap-Mitwirkende (ODbL).

@@ -58,11 +58,10 @@ async function load() {
   H = new Float32Array(raw.length);
   for (let i = 0; i < raw.length; i++) H[i] = raw[i] * meta.terrain.scale;
 
-  status('Lade Luftbild …');
-  const dop = await new THREE.TextureLoader().loadAsync('data/dop.jpg');
-  dop.colorSpace = THREE.SRGBColorSpace;
-  dop.anisotropy = renderer.capabilities.getMaxAnisotropy();
-  buildTerrain(dop);
+  status('Lade Bodenkarte …');
+  const ground = await new THREE.TextureLoader().loadAsync('data/ground.png');
+  buildTerrain(ground);
+  buildJetties(meta.jetties || []);
 
   status('Lade Gebäude …');
   const [bb, fp] = await Promise.all([
@@ -83,15 +82,114 @@ async function load() {
   goHome();
 }
 
-// ---------- Gelände ----------
-function buildTerrain(tex) {
+// ---------- Boden: kachelbare Texturen, gemischt nach Bodenkarte ----------
+const TEX_PX = 512;
+
+// Zeichnet nahtlos kachelbar: jedes Element wird bei Bedarf auch am gegenüberliegenden Rand gezeichnet
+function tileTex(meters, draw) {
+  const c = document.createElement('canvas');
+  c.width = c.height = TEX_PX;
+  const g = c.getContext('2d');
+  const wrap = (fn) => { for (const dx of [-TEX_PX, 0, TEX_PX]) for (const dy of [-TEX_PX, 0, TEX_PX]) fn(dx, dy); };
+  draw(g, TEX_PX, wrap);
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  t.userData.meters = meters;
+  return t;
+}
+
+const rnd = (a, b) => a + Math.random() * (b - a);
+function strokes(g, wrap, n, colors, len, width, angle = null) {
+  for (let k = 0; k < n; k++) {
+    const x = rnd(0, TEX_PX), y = rnd(0, TEX_PX), a = angle ?? rnd(0, Math.PI * 2), l = rnd(len[0], len[1]);
+    g.strokeStyle = colors[(Math.random() * colors.length) | 0];
+    g.lineWidth = rnd(width[0], width[1]);
+    wrap((dx, dy) => {
+      if (x + dx < -l || x + dx > TEX_PX + l || y + dy < -l || y + dy > TEX_PX + l) return;
+      g.beginPath(); g.moveTo(x + dx, y + dy); g.lineTo(x + dx + Math.cos(a) * l, y + dy + Math.sin(a) * l); g.stroke();
+    });
+  }
+}
+function blobs(g, wrap, n, colors, r) {
+  for (let k = 0; k < n; k++) {
+    const x = rnd(0, TEX_PX), y = rnd(0, TEX_PX), rr = rnd(r[0], r[1]);
+    g.fillStyle = colors[(Math.random() * colors.length) | 0];
+    wrap((dx, dy) => {
+      if (x + dx < -rr || x + dx > TEX_PX + rr || y + dy < -rr || y + dy > TEX_PX + rr) return;
+      g.beginPath(); g.ellipse(x + dx, y + dy, rr, rr * rnd(0.6, 1), rnd(0, 3), 0, 7); g.fill();
+    });
+  }
+}
+
+function groundTextures() {
+  return {
+    // Rasen mit einzelnen weißen Blüten, wie im Garten auf den Fotos
+    grass: tileTex(1.5, (g, w, wrap) => {
+      g.fillStyle = '#4f6e2c'; g.fillRect(0, 0, w, w);
+      blobs(g, wrap, 60, ['rgba(70,95,35,0.5)', 'rgba(95,120,50,0.45)', 'rgba(60,80,30,0.5)'], [20, 60]);
+      strokes(g, wrap, 9000, ['#5f8233', '#6f9440', '#47652a', '#7da34a', '#3d5a22', '#86a856'], [5, 13], [1, 2]);
+      blobs(g, wrap, 25, ['#f4f4ee', '#ffffff', '#f3e9a0'], [1.5, 3]);
+    }),
+    // Waldboden unter Kiefern: Nadeln, etwas Moos, Zapfen
+    forest: tileTex(2, (g, w, wrap) => {
+      g.fillStyle = '#6a5236'; g.fillRect(0, 0, w, w);
+      blobs(g, wrap, 50, ['rgba(80,60,40,0.6)', 'rgba(110,85,55,0.5)', 'rgba(70,85,45,0.45)'], [25, 70]);
+      strokes(g, wrap, 7000, ['#8a6640', '#a07848', '#5a4228', '#b58c5a', '#7a6a50', '#4a3a26'], [8, 18], [0.8, 1.6]);
+      blobs(g, wrap, 14, ['#5b4128', '#6e4f30'], [5, 9]);
+      blobs(g, wrap, 30, ['rgba(85,110,50,0.8)', 'rgba(95,125,60,0.7)'], [3, 10]);
+    }),
+    // heller, leicht rötlicher Sandweg mit Kieseln
+    sand: tileTex(2, (g, w, wrap) => {
+      g.fillStyle = '#b8a28e'; g.fillRect(0, 0, w, w);
+      blobs(g, wrap, 60, ['rgba(160,135,115,0.35)', 'rgba(200,185,165,0.35)', 'rgba(150,125,105,0.3)'], [20, 70]);
+      blobs(g, wrap, 9000, ['#a58f7b', '#cbb8a4', '#9a8270', '#d8c8b6', '#8e7866'], [0.6, 1.6]);
+      blobs(g, wrap, 160, ['#8c7d70', '#d5d0c8', '#a09080', '#6f6458'], [2, 4.5]);
+    }),
+    // feuchtes Ufer mit Schilf und Gras
+    shore: tileTex(1.5, (g, w, wrap) => {
+      g.fillStyle = '#4a5530'; g.fillRect(0, 0, w, w);
+      blobs(g, wrap, 40, ['rgba(60,55,35,0.5)', 'rgba(80,90,45,0.5)'], [20, 60]);
+      strokes(g, wrap, 6000, ['#6b7a3c', '#8a9450', '#4e5a2c', '#a39c62', '#5d6a34'], [8, 20], [1, 2.2]);
+    }),
+  };
+}
+
+function buildTerrain(groundMap) {
   const size = 2 * HALF;
   const geo = new THREE.PlaneGeometry(size, size, N - 1, N - 1);
   geo.rotateX(-Math.PI / 2);
   const pos = geo.attributes.position;
   for (let k = 0; k < pos.count; k++) pos.setY(k, H[k]);
   geo.computeVertexNormals();
-  const mesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ map: tex }));
+  const t = groundTextures();
+  const mat = new THREE.MeshLambertMaterial({ map: groundMap });
+  mat.onBeforeCompile = (sh) => {
+    Object.assign(sh.uniforms, {
+      tGrass: { value: t.grass }, tForest: { value: t.forest }, tSand: { value: t.sand }, tShore: { value: t.shore },
+      waterLevel: { value: meta.water },
+    });
+    sh.vertexShader = 'varying vec3 vWP;\n' + sh.vertexShader.replace('#include <worldpos_vertex>',
+      '#include <worldpos_vertex>\n vWP = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+    sh.fragmentShader = 'varying vec3 vWP;\nuniform sampler2D tGrass, tForest, tSand, tShore;\nuniform float waterLevel;\n' +
+      sh.fragmentShader.replace('#include <map_fragment>', `
+        vec3 wgt = texture2D(map, vMapUv).rgb;
+        vec2 w = vWP.xz;
+        // zwei Maßstäbe mischen, damit keine Kachelmuster sichtbar sind
+        vec3 cG = mix(texture2D(tGrass, w / ${t.grass.userData.meters.toFixed(1)}).rgb, texture2D(tGrass, w / 5.3).rgb, 0.35);
+        vec3 cF = mix(texture2D(tForest, w / ${t.forest.userData.meters.toFixed(1)}).rgb, texture2D(tForest, w / 6.1).rgb, 0.35);
+        vec3 cS = mix(texture2D(tSand, w / ${t.sand.userData.meters.toFixed(1)}).rgb, texture2D(tSand, w / 7.7).rgb, 0.3);
+        vec3 cU = texture2D(tShore, w / ${t.shore.userData.meters.toFixed(1)}).rgb;
+        float shore = 1.0 - smoothstep(0.3, 1.2, vWP.y - waterLevel);
+        wgt *= (1.0 - shore);
+        float sum = wgt.r + wgt.g + wgt.b + shore + 1e-4;
+        vec3 col = (cG * wgt.r + cF * wgt.g + cS * wgt.b + cU * shore) / sum;
+        float macro = texture2D(tForest, w / 41.0).r;
+        col *= 0.8 + 0.45 * macro;
+        diffuseColor.rgb *= col;`);
+  };
+  const mesh = new THREE.Mesh(geo, mat);
   mesh.receiveShadow = true;
   scene.add(mesh);
 
@@ -111,24 +209,73 @@ function buildTerrain(tex) {
   );
   outer.position.y = outerY;
   scene.add(outer);
-  const sp = [], suv = [], sidx = [];
+  const sp = [], sidx = [];
   const edges = [
     (t) => [t, 0], (t) => [N - 1, t], (t) => [N - 1 - t, N - 1], (t) => [0, N - 1 - t],
   ];
   for (const edge of edges)
     for (let t = 0; t < N; t++) {
       const [j, i] = edge(t);
-      const x = -HALF + j * STEP, z = -HALF + i * STEP, u = j / (N - 1), v = 1 - i / (N - 1);
+      const x = -HALF + j * STEP, z = -HALF + i * STEP;
       const k = sp.length / 3;
       sp.push(x, H[i * N + j], z, x, outerY - 0.5, z);
-      suv.push(u, v, u, v);
       if (t < N - 1) sidx.push(k, k + 1, k + 2, k + 1, k + 3, k + 2);
     }
   const sg = new THREE.BufferGeometry();
   sg.setAttribute('position', new THREE.Float32BufferAttribute(sp, 3));
-  sg.setAttribute('uv', new THREE.Float32BufferAttribute(suv, 2));
   sg.setIndex(sidx);
-  scene.add(new THREE.Mesh(sg, new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide, color: 0x9a9a9a })));
+  scene.add(new THREE.Mesh(sg, new THREE.MeshLambertMaterial({ color: 0x4f5d33, side: THREE.DoubleSide })));
+}
+
+// ---------- Stege ----------
+function buildJetties(list) {
+  const wood = tileTex(2, (g, w, wrap) => {
+    const pw = w / 8;   // Bohlen à 25 cm
+    for (let k = 0; k < 8; k++) {
+      const v = 150 + Math.random() * 40 | 0;
+      g.fillStyle = `rgb(${v},${v - 8},${v - 20})`; g.fillRect(k * pw, 0, pw - 3, w);
+      g.fillStyle = 'rgba(40,30,20,0.6)'; g.fillRect(k * pw + pw - 3, 0, 3, w);
+    }
+    strokes(g, wrap, 300, ['rgba(90,80,70,0.25)', 'rgba(220,215,205,0.2)'], [20, 60], [1, 2], Math.PI / 2);
+  });
+  const deckMat = new THREE.MeshLambertMaterial({ map: wood });
+  const postMat = new THREE.MeshLambertMaterial({ color: 0x5a4a3a });
+  for (const { land, see, width } of list) {
+    const [x0, z0] = land, [x1, z1] = see;
+    const len = Math.hypot(x1 - x0, z1 - z0) + 2;
+    const yaw = Math.atan2(x1 - x0, z1 - z0);
+    const y = meta.water + 0.55;
+    const deckGeo = new THREE.BoxGeometry(width, 0.08, len);
+    const uv = deckGeo.attributes.uv;          // Bohlen quer zur Laufrichtung, Maßstab in Metern
+    for (let k = 0; k < uv.count; k++) uv.setXY(k, uv.getX(k) * len / 2, uv.getY(k) * width / 2);
+    const deck = new THREE.Mesh(deckGeo, deckMat);
+    deck.position.set((x0 + x1) / 2, y, (z0 + z1) / 2);
+    deck.rotation.y = yaw;
+    deck.castShadow = deck.receiveShadow = true;
+    scene.add(deck);
+    for (let d = -len / 2 + 0.3; d < len / 2; d += 2.5)
+      for (const side of [-1, 1]) {
+        const post = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 1.6), postMat);
+        post.position.set(deck.position.x + Math.sin(yaw) * d + Math.cos(yaw) * side * (width / 2 - 0.1), y - 0.85,
+          deck.position.z + Math.cos(yaw) * d - Math.sin(yaw) * side * (width / 2 - 0.1));
+        scene.add(post);
+      }
+    jettyDecks.push({ x0, z0, x1, z1, width, y: y + 0.04 });
+  }
+}
+
+// Auf Stegen geht man auf den Bohlen statt auf dem Seegrund
+const jettyDecks = [];
+function groundAt(x, z) {
+  let h = heightAt(x, z);
+  for (const j of jettyDecks) {
+    const dx = j.x1 - j.x0, dz = j.z1 - j.z0, L2 = dx * dx + dz * dz;
+    const t = ((x - j.x0) * dx + (z - j.z0) * dz) / L2;
+    if (t < -0.1 || t > 1.1) continue;
+    const px = j.x0 + t * dx, pz = j.z0 + t * dz;
+    if (Math.hypot(x - px, z - pz) < j.width / 2) h = Math.max(h, j.y);
+  }
+  return h;
 }
 
 function heightAt(x, z) {
@@ -458,7 +605,7 @@ function update(dt) {
   else if (ok(p.x + dx, p.z)) p.x += dx;
   else if (ok(p.x, p.z + dz)) p.z += dz;
 
-  const ground = heightAt(p.x, p.z);
+  const ground = groundAt(p.x, p.z);
   if (player.fly) {
     if (keys.has('Space')) p.y += speed * dt;
     if (keys.has('KeyC')) p.y -= speed * dt;
