@@ -20,28 +20,29 @@
   <div id="pos"></div>
 </div>
 
-<canvas id="minimap" width="200" height="200" title="Klick: dorthin springen"></canvas>
+<canvas id="minimap" width="200" height="200" title="Grundstück von oben – Klick: dorthin gehen"></canvas>
 
 <div id="toolbar">
+  <button id="btn-overview" title="Übersicht von oben (U)">⬚ Übersicht</button>
   <button id="btn-fly" title="Fliegen ein/aus (F)">🕊 Fliegen</button>
-  <button id="btn-home" title="Zurück zum Grundstück (H)">🏠</button>
+  <button id="btn-home" title="Zur Terrasse (H)">🏠</button>
   <button id="btn-help" title="Hilfe">?</button>
 </div>
 
 <div id="start" class="panel">
   <h1>Pinnow · Am See 16</h1>
-  <p>Begehbares 3D-Modell aus offenen Geodaten.</p>
+  <p>Begehbares Modell des Grundstücks (Flurstücke 111/90 und 111/91), gebaut aus amtlichen Messdaten und den eigenen Fotos.</p>
   <div id="loading">Lade Daten …</div>
   <div id="help">
-    <p><b>Computer:</b> Klicken, dann mit der Maus umsehen. <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> gehen, <kbd>Shift</kbd> rennen, <kbd>F</kbd> fliegen (<kbd>Leertaste</kbd>/<kbd>C</kbd> hoch/runter), <kbd>H</kbd> zum Grundstück, <kbd>Esc</kbd> Maus freigeben.</p>
+    <p><b>Computer:</b> Klicken, dann mit der Maus umsehen. <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> gehen, <kbd>Shift</kbd> rennen, <kbd>F</kbd> fliegen (<kbd>Leertaste</kbd>/<kbd>C</kbd> hoch/runter), <kbd>H</kbd> zur Terrasse, <kbd>U</kbd> Übersicht, <kbd>Esc</kbd> Maus freigeben.</p>
     <p><b>Handy/Tablet:</b> links ziehen = gehen, rechts ziehen = umsehen.</p>
   </div>
   <button id="btn-start" disabled>Losgehen</button>
 </div>
 
 <div id="joystick"><div id="stick"></div></div>
-<div id="attribution">Daten: © GeoBasis-DE/M-V 2026, <a href="https://www.geoportal-mv.de" target="_blank" rel="noopener">GeoPortal.MV</a> · Wege © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> · 3D: three.js</div>
+<div id="attribution">Daten: © GeoBasis-DE/M-V 2026, <a href="https://www.geoportal-mv.de" target="_blank" rel="noopener">GeoPortal.MV</a> · 3D: three.js</div>
 
-<script type="module" src="js/main.js?v=6"></script>
+<script type="module" src="js/main.js?v=7"></script>
 </body>
 </html>

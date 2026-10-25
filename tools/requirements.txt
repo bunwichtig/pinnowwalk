@@ -2,6 +2,6 @@ numpy
 tifffile
 imagecodecs
 lxml
-pillow
 mapbox-earcut
-pyproj
+shapely
+scipy

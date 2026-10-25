@@ -1,526 +1,260 @@
 import * as THREE from 'three';
-import { Sky } from 'three/addons/objects/Sky.js';
 
-const EYE = 1.7;          // Augenhöhe in m
-const WALK = 4, RUN = 12, FLY = 25, FLY_FAST = 80;
-const GRAVITY = 20, JUMP = 6;
+// Diorama von Am See 16: alle Formen aus Messdaten (ALKIS, DGM1, LoD2, nDOM) und den eigenen Fotos.
+// Bewusst ohne Texturen: schlichte, einfarbige Flächen wie bei einem Architekturmodell.
+const EYE = 1.7;
+const WALK = 2.5, RUN = 6, FLY = 10;
+const GRAVITY = 20, JUMP = 5;
 const DEG = Math.PI / 180;
 const $ = (id) => document.getElementById(id);
 const isTouch = matchMedia('(pointer: coarse)').matches;
 if (isTouch) document.body.classList.add('touch');
 
+const COLORS = {
+  ground: 0xd9cfb8, plinth: 0x8f8574, water: 0x8fb3c4, wall: 0xf4f1ea, roof: 0x8a8f96,
+  leaf: [0x9fb98a, 0x8aab76, 0x7a9c68, 0x6c8e5c], trunk: 0x8a7462, wood: 0xb79a78, concrete: 0xc8c6c0,
+  boat: 0xffffff, bed: 0x8c6f55, stone: 0xb0aaa0, roofSheet: 0xa9b0b5,
+};
+
 // ---------- Renderer, Szene, Licht ----------
 const renderer = new THREE.WebGLRenderer({ canvas: $('scene'), antialias: true });
-renderer.setPixelRatio(Math.min(devicePixelRatio, isTouch ? 1.25 : 1.5));
+renderer.setPixelRatio(Math.min(devicePixelRatio, isTouch ? 1.5 : 2));
 renderer.setSize(innerWidth, innerHeight);
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 0.65;
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFShadowMap;
-renderer.shadowMap.autoUpdate = false;   // alles steht still: Schatten nur einmal berechnen
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.autoUpdate = false;     // alles steht still: Schatten nur einmal berechnen
 
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.2, 1500);
+scene.background = new THREE.Color(0xeef0f2);
+const camera = new THREE.PerspectiveCamera(65, innerWidth / innerHeight, 0.1, 500);
 camera.rotation.order = 'YXZ';
 
-const sun = new THREE.Vector3().setFromSphericalCoords(1, (90 - 38) * DEG, 200 * DEG);
-const sky = new Sky();
-sky.scale.setScalar(1200);
-Object.assign(sky.material.uniforms, {});
-sky.material.uniforms.turbidity.value = 4;
-sky.material.uniforms.rayleigh.value = 1.2;
-sky.material.uniforms.mieCoefficient.value = 0.004;
-sky.material.uniforms.mieDirectionalG.value = 0.8;
-sky.material.uniforms.sunPosition.value.copy(sun);
-scene.add(sky);
-scene.fog = new THREE.Fog(0xc9d8e6, 60, 220);
+scene.add(new THREE.HemisphereLight(0xffffff, 0xb8b2a6, 1.9));
+const sun = new THREE.DirectionalLight(0xffffff, 2.2);
+sun.position.set(-30, 60, 40);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -40, right: 40, top: 40, bottom: -40, near: 1, far: 200 });
+sun.shadow.normalBias = 0.05;
+scene.add(sun);
 
-scene.add(new THREE.HemisphereLight(0xdfeeff, 0x6b6a4a, 1.6));
-const sunLight = new THREE.DirectionalLight(0xfff3df, 2.6);
-sunLight.castShadow = true;
-sunLight.shadow.mapSize.set(isTouch ? 1024 : 2048, isTouch ? 1024 : 2048);
-Object.assign(sunLight.shadow.camera, { left: -75, right: 75, top: 75, bottom: -75, near: 1, far: 600 });
-sunLight.shadow.bias = -0.0005;
-sunLight.shadow.normalBias = 0.4;
-scene.add(sunLight, sunLight.target);
+const mat = (color, extra = {}) => new THREE.MeshLambertMaterial({ color, flatShading: true, ...extra });
+const add = (mesh) => { mesh.castShadow = mesh.receiveShadow = true; scene.add(mesh); return mesh; };
 
-// ---------- Daten laden ----------
-let meta, H, N, STEP, HALF;
-const footGrid = new Map();
+let M;               // Modelldaten
+const terrainTris = [];
+const solids = [];   // Grundrisse, durch die man nicht laufen kann
 
 async function load() {
-  const status = (t) => ($('loading').textContent = t);
-  status('Lade Geländedaten …');
-  meta = await (await fetch('data/meta.json', { cache: 'no-cache' })).json();
-  ({ n: N, step: STEP } = meta.terrain);
-  HALF = meta.half;
-  const tb = await (await fetch('data/terrain.bin', { cache: 'no-cache' })).arrayBuffer();
-  const raw = new Uint16Array(tb);
-  H = new Float32Array(raw.length);
-  for (let i = 0; i < raw.length; i++) H[i] = raw[i] * meta.terrain.scale;
-
-  status('Lade Bodenkarte …');
-  const ground = await new THREE.TextureLoader().loadAsync('data/ground.png?v=6');
-  buildTerrain(ground);
-  buildJetties(meta.jetties || []);
-
-  status('Lade Gebäude …');
-  const [bb, fp] = await Promise.all([
-    fetch('data/buildings.bin', { cache: 'no-cache' }).then((r) => r.arrayBuffer()),
-    fetch('data/footprints.json', { cache: 'no-cache' }).then((r) => r.json()),
-  ]);
-  buildBuildings(bb, meta.buildings);
-  indexFootprints(fp);
-
-  status('Lade Bäume …');
-  buildTrees(await (await fetch('data/trees.bin', { cache: 'no-cache' })).arrayBuffer());
-  buildHouseLabel();
-
-  initMinimap();
-
-  sunLight.position.copy(sun).multiplyScalar(300);
+  M = await (await fetch('data/model.json', { cache: 'no-cache' })).json();
+  buildGround();
+  buildWater();
+  M.buildings.forEach(buildHouse);
+  buildVegetation();
+  buildPhotoObjects();
   renderer.shadowMap.needsUpdate = true;
-  status('');
+  $('loading').textContent = '';
   $('btn-start').disabled = false;
-  goHome();
+  overview();
 }
 
-// ---------- Boden: kachelbare Texturen, gemischt nach Bodenkarte ----------
-const TEX_PX = 512;
+// ---------- Gelände mit Sockel ----------
+function buildGround() {
+  const { verts, tris, edge, bottom } = M.ground;
+  const pos = [];
+  for (const t of tris) for (const k of t) pos.push(...verts[k]);
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.computeVertexNormals();
+  add(new THREE.Mesh(g, mat(COLORS.ground, { side: THREE.DoubleSide })));
+  for (const t of tris) terrainTris.push(t.map((k) => verts[k]));
 
-// Zeichnet nahtlos kachelbar: jedes Element wird bei Bedarf auch am gegenüberliegenden Rand gezeichnet
-function tileTex(meters, draw) {
-  const c = document.createElement('canvas');
-  c.width = c.height = TEX_PX;
-  const g = c.getContext('2d');
-  const wrap = (fn) => { for (const dx of [-TEX_PX, 0, TEX_PX]) for (const dy of [-TEX_PX, 0, TEX_PX]) fn(dx, dy); };
-  draw(g, TEX_PX, wrap);
-  const t = new THREE.CanvasTexture(c);
-  t.wrapS = t.wrapT = THREE.RepeatWrapping;
-  t.colorSpace = THREE.SRGBColorSpace;
-  t.anisotropy = renderer.capabilities.getMaxAnisotropy();
-  t.userData.meters = meters;
-  return t;
-}
-
-const rnd = (a, b) => a + Math.random() * (b - a);
-function strokes(g, wrap, n, colors, len, width, angle = null) {
-  for (let k = 0; k < n; k++) {
-    const x = rnd(0, TEX_PX), y = rnd(0, TEX_PX), a = angle ?? rnd(0, Math.PI * 2), l = rnd(len[0], len[1]);
-    g.strokeStyle = colors[(Math.random() * colors.length) | 0];
-    g.lineWidth = rnd(width[0], width[1]);
-    wrap((dx, dy) => {
-      if (x + dx < -l || x + dx > TEX_PX + l || y + dy < -l || y + dy > TEX_PX + l) return;
-      g.beginPath(); g.moveTo(x + dx, y + dy); g.lineTo(x + dx + Math.cos(a) * l, y + dy + Math.sin(a) * l); g.stroke();
-    });
+  // Seitenwände des Dioramas entlang der Grundstücksgrenze
+  const w = [];
+  for (let k = 0; k < edge; k++) {
+    const a = verts[k], b = verts[(k + 1) % edge];
+    w.push(...a, ...b, b[0], bottom, b[2], ...a, b[0], bottom, b[2], a[0], bottom, a[2]);
   }
-}
-function blobs(g, wrap, n, colors, r) {
-  for (let k = 0; k < n; k++) {
-    const x = rnd(0, TEX_PX), y = rnd(0, TEX_PX), rr = rnd(r[0], r[1]);
-    g.fillStyle = colors[(Math.random() * colors.length) | 0];
-    wrap((dx, dy) => {
-      if (x + dx < -rr || x + dx > TEX_PX + rr || y + dy < -rr || y + dy > TEX_PX + rr) return;
-      g.beginPath(); g.ellipse(x + dx, y + dy, rr, rr * rnd(0.6, 1), rnd(0, 3), 0, 7); g.fill();
-    });
-  }
-}
-
-function groundTextures() {
-  return {
-    // Rasen mit einzelnen weißen Blüten, wie im Garten auf den Fotos
-    grass: tileTex(1.5, (g, w, wrap) => {
-      g.fillStyle = '#4f6e2c'; g.fillRect(0, 0, w, w);
-      blobs(g, wrap, 60, ['rgba(70,95,35,0.5)', 'rgba(95,120,50,0.45)', 'rgba(60,80,30,0.5)'], [20, 60]);
-      strokes(g, wrap, 9000, ['#5f8233', '#6f9440', '#47652a', '#7da34a', '#3d5a22', '#86a856'], [5, 13], [1, 2]);
-      blobs(g, wrap, 25, ['#f4f4ee', '#ffffff', '#f3e9a0'], [1.5, 3]);
-    }),
-    // Waldboden unter Kiefern: Nadeln, etwas Moos, Zapfen
-    forest: tileTex(2, (g, w, wrap) => {
-      g.fillStyle = '#6a5236'; g.fillRect(0, 0, w, w);
-      blobs(g, wrap, 50, ['rgba(80,60,40,0.6)', 'rgba(110,85,55,0.5)', 'rgba(70,85,45,0.45)'], [25, 70]);
-      strokes(g, wrap, 7000, ['#8a6640', '#a07848', '#5a4228', '#b58c5a', '#7a6a50', '#4a3a26'], [8, 18], [0.8, 1.6]);
-      blobs(g, wrap, 14, ['#5b4128', '#6e4f30'], [5, 9]);
-      blobs(g, wrap, 30, ['rgba(85,110,50,0.8)', 'rgba(95,125,60,0.7)'], [3, 10]);
-    }),
-    // heller, leicht rötlicher Sandweg mit Kieseln
-    sand: tileTex(2, (g, w, wrap) => {
-      g.fillStyle = '#b8a28e'; g.fillRect(0, 0, w, w);
-      blobs(g, wrap, 60, ['rgba(160,135,115,0.35)', 'rgba(200,185,165,0.35)', 'rgba(150,125,105,0.3)'], [20, 70]);
-      blobs(g, wrap, 9000, ['#a58f7b', '#cbb8a4', '#9a8270', '#d8c8b6', '#8e7866'], [0.6, 1.6]);
-      blobs(g, wrap, 160, ['#8c7d70', '#d5d0c8', '#a09080', '#6f6458'], [2, 4.5]);
-    }),
-    // feuchtes Ufer mit Schilf und Gras
-    shore: tileTex(1.5, (g, w, wrap) => {
-      g.fillStyle = '#4a5530'; g.fillRect(0, 0, w, w);
-      blobs(g, wrap, 40, ['rgba(60,55,35,0.5)', 'rgba(80,90,45,0.5)'], [20, 60]);
-      strokes(g, wrap, 6000, ['#6b7a3c', '#8a9450', '#4e5a2c', '#a39c62', '#5d6a34'], [8, 20], [1, 2.2]);
-    }),
-  };
+  const wg = new THREE.BufferGeometry();
+  wg.setAttribute('position', new THREE.Float32BufferAttribute(w, 3));
+  wg.computeVertexNormals();
+  add(new THREE.Mesh(wg, mat(COLORS.plinth, { side: THREE.DoubleSide })));
+  // Bodenplatte
+  const shape = new THREE.Shape(M.area.map(([x, z]) => new THREE.Vector2(x, -z)));
+  const base = new THREE.Mesh(new THREE.ShapeGeometry(shape).rotateX(-Math.PI / 2), mat(COLORS.plinth, { side: THREE.DoubleSide }));
+  base.position.y = bottom;
+  scene.add(base);
 }
 
-function buildTerrain(groundMap) {
-  const size = 2 * HALF;
-  const geo = new THREE.PlaneGeometry(size, size, N - 1, N - 1);
-  geo.rotateX(-Math.PI / 2);
-  const pos = geo.attributes.position;
-  for (let k = 0; k < pos.count; k++) pos.setY(k, H[k]);
-  geo.computeVertexNormals();
-  const t = groundTextures();
-  const mat = new THREE.MeshLambertMaterial({ map: groundMap });
-  mat.onBeforeCompile = (sh) => {
-    Object.assign(sh.uniforms, {
-      tGrass: { value: t.grass }, tForest: { value: t.forest }, tSand: { value: t.sand }, tShore: { value: t.shore },
-      waterLevel: { value: meta.water },
-    });
-    sh.vertexShader = 'varying vec3 vWP;\n' + sh.vertexShader.replace('#include <worldpos_vertex>',
-      '#include <worldpos_vertex>\n vWP = (modelMatrix * vec4(transformed, 1.0)).xyz;');
-    sh.fragmentShader = 'varying vec3 vWP;\nuniform sampler2D tGrass, tForest, tSand, tShore;\nuniform float waterLevel;\n' +
-      sh.fragmentShader.replace('#include <map_fragment>', `
-        vec3 wgt = texture2D(map, vMapUv).rgb;
-        vec2 w = vWP.xz;
-        // zwei Maßstäbe mischen, damit keine Kachelmuster sichtbar sind
-        vec3 cG = mix(texture2D(tGrass, w / ${t.grass.userData.meters.toFixed(1)}).rgb, texture2D(tGrass, w / 5.3).rgb, 0.35);
-        vec3 cF = mix(texture2D(tForest, w / ${t.forest.userData.meters.toFixed(1)}).rgb, texture2D(tForest, w / 6.1).rgb, 0.35);
-        vec3 cS = mix(texture2D(tSand, w / ${t.sand.userData.meters.toFixed(1)}).rgb, texture2D(tSand, w / 7.7).rgb, 0.3);
-        vec3 cU = texture2D(tShore, w / ${t.shore.userData.meters.toFixed(1)}).rgb;
-        float shore = 1.0 - smoothstep(0.3, 1.2, vWP.y - waterLevel);
-        wgt *= (1.0 - shore);
-        float sum = wgt.r + wgt.g + wgt.b + shore + 1e-4;
-        vec3 col = (cG * wgt.r + cF * wgt.g + cS * wgt.b + cU * shore) / sum;
-        float macro = texture2D(tForest, w / 41.0).r;
-        col *= 0.8 + 0.45 * macro;
-        diffuseColor.rgb *= col;`);
-  };
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.receiveShadow = true;
-  scene.add(mesh);
-
-  // Wasserfläche des Pinnower Sees
-  const water = new THREE.Mesh(
-    new THREE.PlaneGeometry(size, size).rotateX(-Math.PI / 2),
-    new THREE.MeshPhongMaterial({ color: 0x2d5a78, transparent: true, opacity: 0.55, shininess: 120, specular: 0x99aabb })
-  );
-  water.position.y = meta.water;
+function buildWater() {
+  if (!M.waterArea.length) return;
+  const shape = new THREE.Shape(M.waterArea.map(([x, z]) => new THREE.Vector2(x, -z)));
+  const depth = M.water - M.ground.bottom;
+  const geo = new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: false }).rotateX(-Math.PI / 2);
+  const water = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color: COLORS.water, transparent: true, opacity: 0.75 }));
+  water.position.y = M.ground.bottom;
+  water.receiveShadow = true;
   scene.add(water);
-
-  // Umgebung außerhalb des Ausschnitts: flache Ebene, mit einer Schürze an den Geländerand angeschlossen
-  const outerY = meta.water + 0.2;
-  const outer = new THREE.Mesh(
-    new THREE.RingGeometry(size * 0.705, 1200, 4, 1, Math.PI / 4).rotateX(-Math.PI / 2),
-    new THREE.MeshLambertMaterial({ color: 0x5f6b45 })
-  );
-  outer.position.y = outerY;
-  scene.add(outer);
-  const sp = [], sidx = [];
-  const edges = [
-    (t) => [t, 0], (t) => [N - 1, t], (t) => [N - 1 - t, N - 1], (t) => [0, N - 1 - t],
-  ];
-  for (const edge of edges)
-    for (let t = 0; t < N; t++) {
-      const [j, i] = edge(t);
-      const x = -HALF + j * STEP, z = -HALF + i * STEP;
-      const k = sp.length / 3;
-      sp.push(x, H[i * N + j], z, x, outerY - 0.5, z);
-      if (t < N - 1) sidx.push(k, k + 1, k + 2, k + 1, k + 3, k + 2);
-    }
-  const sg = new THREE.BufferGeometry();
-  sg.setAttribute('position', new THREE.Float32BufferAttribute(sp, 3));
-  sg.setIndex(sidx);
-  scene.add(new THREE.Mesh(sg, new THREE.MeshLambertMaterial({ color: 0x4f5d33, side: THREE.DoubleSide })));
 }
 
-// ---------- Stege ----------
-function buildJetties(list) {
-  const wood = tileTex(2, (g, w, wrap) => {
-    const pw = w / 8;   // Bohlen à 25 cm
-    for (let k = 0; k < 8; k++) {
-      const v = 150 + Math.random() * 40 | 0;
-      g.fillStyle = `rgb(${v},${v - 8},${v - 20})`; g.fillRect(k * pw, 0, pw - 3, w);
-      g.fillStyle = 'rgba(40,30,20,0.6)'; g.fillRect(k * pw + pw - 3, 0, 3, w);
-    }
-    strokes(g, wrap, 300, ['rgba(90,80,70,0.25)', 'rgba(220,215,205,0.2)'], [20, 60], [1, 2], Math.PI / 2);
+// ---------- Haus aus LoD2 ----------
+function buildHouse(b) {
+  for (const [key, color] of [['wall', COLORS.wall], ['roof', COLORS.roof]]) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(b[key], 3));
+    g.computeVertexNormals();
+    add(new THREE.Mesh(g, mat(color, { side: THREE.DoubleSide })));
+  }
+  solids.push(b.foot);
+}
+
+// ---------- Bewuchs aus dem nDOM ----------
+function buildVegetation() {
+  const v = M.vegetation;
+  const leaves = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), mat(0xffffff), v.length);
+  const m = new THREE.Matrix4(), c = new THREE.Color();
+  v.forEach(([x, z, y, thick, h], k) => {
+    m.makeScale(0.96, thick, 0.96).setPosition(x, y + thick / 2, z);
+    leaves.setMatrixAt(k, m);
+    c.setHex(COLORS.leaf[Math.min(3, Math.floor(h / 6))]);
+    leaves.setColorAt(k, c);
   });
-  const deckMat = new THREE.MeshLambertMaterial({ map: wood });
-  const postMat = new THREE.MeshLambertMaterial({ color: 0x5a4a3a });
-  for (const { land, see, width, ours } of list) {
-    const [x0, z0] = land, [x1, z1] = see;
-    const len = Math.hypot(x1 - x0, z1 - z0) + 2;
-    const yaw = Math.atan2(x1 - x0, z1 - z0);
-    const y = meta.water + 0.55;
-    const deckGeo = new THREE.BoxGeometry(width, 0.08, len);
-    const uv = deckGeo.attributes.uv;          // Bohlen quer zur Laufrichtung, Maßstab in Metern
-    for (let k = 0; k < uv.count; k++) uv.setXY(k, uv.getX(k) * len / 2, uv.getY(k) * width / 2);
-    const deck = new THREE.Mesh(deckGeo, deckMat);
-    deck.position.set((x0 + x1) / 2, y, (z0 + z1) / 2);
-    deck.rotation.y = yaw;
-    deck.castShadow = deck.receiveShadow = true;
-    scene.add(deck);
-    for (let d = -len / 2 + 0.3; d < len / 2; d += 2.5)
-      for (const side of [-1, 1]) {
-        const post = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 1.6), postMat);
-        post.position.set(deck.position.x + Math.sin(yaw) * d + Math.cos(yaw) * side * (width / 2 - 0.1), y - 0.85,
-          deck.position.z + Math.cos(yaw) * d - Math.sin(yaw) * side * (width / 2 - 0.1));
-        scene.add(post);
-      }
-    jettyDecks.push({ x0, z0, x1, z1, width, y: y + 0.04 });
-    if (ours) {
-      // Badeleiter am Seeende, wie auf dem Foto, und ein Schild
-      const lad = new THREE.Group();
-      const steel = new THREE.MeshLambertMaterial({ color: 0xb8bcc0 });
-      for (const sx of [-0.25, 0.25]) {
-        const rail = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 2.2), steel);
-        rail.position.set(sx, -0.4, 0);
-        lad.add(rail);
-      }
-      for (let k = 0; k < 4; k++) {
-        const rung = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.03, 0.06), steel);
-        rung.position.set(0, -1.2 + k * 0.35, 0);
-        lad.add(rung);
-      }
-      lad.position.set(x1 + Math.cos(yaw) * (width / 2 + 0.1), y + 0.3, z1 - Math.sin(yaw) * (width / 2 + 0.1));
-      lad.rotation.y = yaw + Math.PI / 2;
-      scene.add(lad);
-      const sign = makeLabel('Unser Steg', '#ffcf8a');
-      sign.scale.set(5, 1.25, 1);
-      sign.position.set(x1, y + 3, z1);
-      scene.add(sign);
-    }
+  add(leaves);
+  const tg = new THREE.CylinderGeometry(1, 1, 1, 6);
+  for (const [x, z, y0, y1, r] of M.trunks) {
+    const t = add(new THREE.Mesh(tg, mat(COLORS.trunk)));
+    t.scale.set(r, y1 - y0, r);
+    t.position.set(x, (y0 + y1) / 2, z);
   }
 }
 
-// Auf Stegen geht man auf den Bohlen statt auf dem Seegrund
-const jettyDecks = [];
-function groundAt(x, z) {
-  let h = heightAt(x, z);
-  for (const j of jettyDecks) {
+// ---------- Dinge von den Fotos ----------
+function buildPhotoObjects() {
+  const o = M.objects;
+  // Steg mit Badeleiter
+  const { land, see, width, y } = o.steg;
+  const len = Math.hypot(see[0] - land[0], see[1] - land[1]) + 1.5;
+  const yaw = Math.atan2(see[0] - land[0], see[1] - land[1]);
+  const deck = add(new THREE.Mesh(new THREE.BoxGeometry(width, 0.08, len), mat(COLORS.wood)));
+  deck.position.set((land[0] + see[0]) / 2, y, (land[1] + see[1]) / 2);
+  deck.rotation.y = yaw;
+  for (let d = -len / 2 + 0.3; d < len / 2; d += 2)
+    for (const s of [-1, 1]) {
+      const p = add(new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 1.5, 6), mat(COLORS.wood)));
+      p.position.set(deck.position.x + Math.sin(yaw) * d + Math.cos(yaw) * s * (width / 2 - 0.1), y - 0.8,
+        deck.position.z + Math.cos(yaw) * d - Math.sin(yaw) * s * (width / 2 - 0.1));
+    }
+  const ladder = new THREE.Group();
+  for (const sx of [-0.22, 0.22]) {
+    const r = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 1.8, 6), mat(COLORS.concrete));
+    r.position.set(sx, -0.5, 0);
+    ladder.add(r);
+  }
+  for (let k = 0; k < 3; k++) {
+    const r = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.03, 0.05), mat(COLORS.concrete));
+    r.position.set(0, -1.1 + k * 0.35, 0);
+    ladder.add(r);
+  }
+  ladder.position.set(see[0] + Math.cos(yaw) * (width / 2 + 0.05), y + 0.3, see[1] - Math.sin(yaw) * (width / 2 + 0.05));
+  ladder.rotation.y = yaw + Math.PI / 2;
+  scene.add(ladder);
+  decks.push({ x0: land[0], z0: land[1], x1: see[0], z1: see[1], width, y: y + 0.04 });
+
+  // Betonstufen den Hang hinab
+  for (const [x, z, h] of o.treppe.steps) {
+    const s = add(new THREE.Mesh(new THREE.BoxGeometry(o.treppe.width, 0.18, 0.4), mat(COLORS.concrete)));
+    s.position.set(x, h + 0.04, z);
+    s.rotation.y = o.treppe.yaw;
+  }
+
+  if (o.terrasse) {
+    // Terrasse aus Betonplatten (Fugen als einzelne Platten)
+    const t = o.terrasse, grp = new THREE.Group();
+    for (let i = 0; i < 5; i++)
+      for (let j = 0; j < 4; j++) {
+        const p = new THREE.Mesh(new THREE.BoxGeometry(0.86, 0.06, 0.96), mat(COLORS.concrete));
+        p.position.set(-t.w / 2 + 0.45 + i * 0.9, 0.03, -t.d / 2 + 0.5 + j * 1.0);
+        p.receiveShadow = true;
+        grp.add(p);
+      }
+    // Wellblech-Vordach auf vier Pfosten
+    const v = o.vordach;
+    const sheet = new THREE.Mesh(new THREE.BoxGeometry(t.w + 0.4, 0.05, t.d), mat(COLORS.roofSheet));
+    sheet.position.set(0, v.h + 0.15, 0);
+    sheet.rotation.x = -0.12;
+    sheet.castShadow = true;
+    grp.add(sheet);
+    for (const [px, pz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.12, v.h, 0.12), mat(COLORS.wood));
+      post.position.set(px * (t.w / 2 - 0.1), v.h / 2, pz * (t.d / 2 - 0.1));
+      post.castShadow = true;
+      grp.add(post);
+    }
+    grp.position.set(t.x, t.y, t.z);
+    grp.rotation.y = t.yaw;
+    scene.add(grp);
+  }
+
+  // umgedrehtes Boot und Beet mit Steinen neben dem Steg
+  const boat = add(new THREE.Mesh(new THREE.SphereGeometry(1, 12, 6, 0, Math.PI * 2, 0, Math.PI / 2), mat(COLORS.boat)));
+  boat.scale.set(0.7, 0.35, 2.1);
+  boat.position.set(o.boot.x, o.boot.y, o.boot.z);
+  boat.rotation.y = o.boot.yaw;
+  const bed = add(new THREE.Mesh(new THREE.CylinderGeometry(o.beet.r, o.beet.r, 0.15, 10), mat(COLORS.bed)));
+  bed.position.set(o.beet.x, o.beet.y + 0.05, o.beet.z);
+  for (let k = 0; k < 9; k++) {
+    const a = (k / 9) * Math.PI * 2;
+    const st = add(new THREE.Mesh(new THREE.DodecahedronGeometry(0.18), mat(COLORS.stone)));
+    st.position.set(o.beet.x + Math.cos(a) * o.beet.r, o.beet.y + 0.12, o.beet.z + Math.sin(a) * o.beet.r);
+  }
+}
+
+// ---------- Höhe, Grenzen ----------
+const decks = [];
+const down = new THREE.Raycaster(), tmpV = new THREE.Vector3(), DOWN = new THREE.Vector3(0, -1, 0);
+
+function pointInPoly(x, z, poly) {
+  let inside = false;
+  for (let a = 0, b = poly.length - 1; a < poly.length; b = a++) {
+    const [xa, za] = poly[a], [xb, zb] = poly[b];
+    if ((za > z) !== (zb > z) && x < ((xb - xa) * (z - za)) / (zb - za) + xa) inside = !inside;
+  }
+  return inside;
+}
+
+function terrainHeight(x, z) {
+  for (const [a, b, c] of terrainTris) {
+    const d = (b[2] - c[2]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[2] - c[2]);
+    const l1 = ((b[2] - c[2]) * (x - c[0]) + (c[0] - b[0]) * (z - c[2])) / d;
+    const l2 = ((c[2] - a[2]) * (x - c[0]) + (a[0] - c[0]) * (z - c[2])) / d;
+    const l3 = 1 - l1 - l2;
+    if (l1 >= -1e-6 && l2 >= -1e-6 && l3 >= -1e-6) return l1 * a[1] + l2 * b[1] + l3 * c[1];
+  }
+  return null;
+}
+
+function onDeck(x, z) {
+  for (const j of decks) {
     const dx = j.x1 - j.x0, dz = j.z1 - j.z0, L2 = dx * dx + dz * dz;
     const t = ((x - j.x0) * dx + (z - j.z0) * dz) / L2;
-    if (t < -0.1 || t > 1.1) continue;
-    const px = j.x0 + t * dx, pz = j.z0 + t * dz;
-    if (Math.hypot(x - px, z - pz) < j.width / 2) h = Math.max(h, j.y);
+    if (t < -0.2 || t > 1.1) continue;
+    if (Math.hypot(x - (j.x0 + t * dx), z - (j.z0 + t * dz)) < j.width / 2) return j.y;
   }
-  return h;
+  return null;
 }
 
-function heightAt(x, z) {
-  const fx = THREE.MathUtils.clamp((x + HALF) / STEP, 0, N - 1.001);
-  const fz = THREE.MathUtils.clamp((z + HALF) / STEP, 0, N - 1.001);
-  const j = Math.floor(fx), i = Math.floor(fz), dx = fx - j, dz = fz - i;
-  const a = H[i * N + j], b = H[i * N + j + 1], c = H[(i + 1) * N + j], d = H[(i + 1) * N + j + 1];
-  // gleiche Dreiecksaufteilung wie PlaneGeometry
-  return dx + dz <= 1 ? a + (b - a) * dx + (c - a) * dz : d + (c - d) * (1 - dx) + (b - d) * (1 - dz);
+function groundAt(x, z) {
+  const d = onDeck(x, z);
+  if (d != null) return d;
+  return terrainHeight(x, z);
 }
 
-// ---------- Gebäude (LoD2) mit gezeichneten Texturen ----------
-const PX_PER_M = 170;
-
-function canvasTex(wm, hm, draw) {
-  const c = document.createElement('canvas');
-  c.width = Math.round(wm * PX_PER_M); c.height = Math.round(hm * PX_PER_M);
-  const g = c.getContext('2d');
-  draw(g, c.width, c.height, PX_PER_M);
-  const t = new THREE.CanvasTexture(c);
-  t.wrapS = t.wrapT = THREE.RepeatWrapping;
-  t.repeat.set(1 / wm, 1 / hm);
-  t.colorSpace = THREE.SRGBColorSpace;
-  t.anisotropy = renderer.capabilities.getMaxAnisotropy();
-  return t;
-}
-
-function noise(g, w, h, n, alpha) {
-  for (let k = 0; k < n; k++) {
-    const v = Math.random() * 255 | 0;
-    g.fillStyle = `rgba(${v},${v},${v},${alpha})`;
-    g.fillRect(Math.random() * w, Math.random() * h, 2, 2);
-  }
-}
-
-// Fenster in Zeichenkoordinaten (y nach unten); im Bild ist unten = Geschossboden
-function drawWindow(g, x, y, w, h, m, frame) {
-  g.fillStyle = 'rgba(0,0,0,0.25)';
-  g.fillRect(x - 0.05 * m, y + h, w + 0.1 * m, 0.06 * m);            // Fensterbank-Schatten
-  g.fillStyle = frame;
-  g.fillRect(x - 0.06 * m, y - 0.06 * m, w + 0.12 * m, h + 0.12 * m);
-  const glass = g.createLinearGradient(x, y, x + w, y + h);
-  glass.addColorStop(0, '#5d7a91'); glass.addColorStop(0.45, '#2a3c4c'); glass.addColorStop(1, '#45627a');
-  g.fillStyle = glass;
-  g.fillRect(x, y, w, h);
-  g.fillStyle = frame;
-  g.fillRect(x + w / 2 - 0.03 * m, y, 0.06 * m, h);                  // Mittelpfosten
-  g.fillRect(x, y + h * 0.32, w, 0.05 * m);                          // Kämpfer
-  g.fillStyle = '#cfcfcf';
-  g.fillRect(x - 0.08 * m, y + h + 0.06 * m, w + 0.16 * m, 0.05 * m); // Fensterbank
-}
-
-function wallTextures() {
-  const W = 3, H = 2.8;
-  const win = (g, w, h, m, frame) => drawWindow(g, 0.9 * m, h - 2.2 * m, 1.2 * m, 1.3 * m, m, frame);
-  return {
-    putz: canvasTex(W, H, (g, w, h, m) => {
-      g.fillStyle = '#f4f2ee'; g.fillRect(0, 0, w, h);
-      noise(g, w, h, 9000, 0.06);
-      win(g, w, h, m, '#ffffff');
-    }),
-    klinker: canvasTex(W, H, (g, w, h, m) => {
-      g.fillStyle = '#d8d2c8'; g.fillRect(0, 0, w, h);
-      const bw = 0.25 * m, bh = 0.075 * m, j = 0.012 * m;
-      for (let r = 0, y = 0; y < h; r++, y += bh)
-        for (let x = (r % 2) * -bw / 2; x < w; x += bw) {
-          const v = 0.85 + Math.random() * 0.3;
-          g.fillStyle = `rgb(${150 * v | 0},${62 * v | 0},${44 * v | 0})`;
-          g.fillRect(x + j, y + j, bw - 2 * j, bh - 2 * j);
-        }
-      win(g, w, h, m, '#f2f2f2');
-    }),
-    holz: canvasTex(W, H, (g, w, h, m) => {
-      const bw = 0.14 * m;
-      for (let x = 0; x < w; x += bw) {
-        const v = 215 + Math.random() * 30 | 0;
-        g.fillStyle = `rgb(${v},${v},${v})`; g.fillRect(x, 0, bw, h);
-        g.fillStyle = 'rgba(0,0,0,0.25)'; g.fillRect(x + bw - 0.012 * m, 0, 0.012 * m, h);
-      }
-      noise(g, w, h, 4000, 0.05);
-      win(g, w, h, m, '#f6f3ea');
-    }),
-    schuppen: canvasTex(W, H, (g, w, h, m) => {
-      const bw = 0.2 * m;
-      for (let x = 0; x < w; x += bw) {
-        const v = 190 + Math.random() * 50 | 0;
-        g.fillStyle = `rgb(${v},${v},${v})`; g.fillRect(x, 0, bw, h);
-        g.fillStyle = 'rgba(0,0,0,0.45)'; g.fillRect(x, 0, 0.02 * m, h);
-      }
-      for (let k = 0; k < 60; k++) {           // Maserung
-        g.strokeStyle = 'rgba(0,0,0,0.06)';
-        const x = Math.random() * w;
-        g.beginPath(); g.moveTo(x, 0); g.bezierCurveTo(x + 6, h / 3, x - 6, h * 2 / 3, x + 3, h); g.stroke();
-      }
-    }),
-    dach: canvasTex(1, 1, (g, w, h, m) => {
-      g.fillStyle = '#9a9a9a'; g.fillRect(0, 0, w, h);
-      const tw = 0.25 * m, th = 0.335 * m;
-      for (let r = 0, y = 0; y < h; r++, y += th)
-        for (let x = (r % 2) * tw / 2 - tw; x < w; x += tw) {
-          const v = 0.88 + Math.random() * 0.12;
-          const gr = g.createLinearGradient(x, 0, x + tw, 0);
-          gr.addColorStop(0, `rgb(${170 * v | 0},${170 * v | 0},${170 * v | 0})`);
-          gr.addColorStop(0.5, `rgb(${235 * v | 0},${235 * v | 0},${235 * v | 0})`);
-          gr.addColorStop(1, `rgb(${150 * v | 0},${150 * v | 0},${150 * v | 0})`);
-          g.fillStyle = gr;
-          g.fillRect(x + 1, y, tw - 2, th - 0.03 * m);
-          g.fillStyle = 'rgba(0,0,0,0.35)';
-          g.fillRect(x, y + th - 0.03 * m, tw, 0.03 * m);
-        }
-    }),
-  };
-}
-
-function buildBuildings(buf, index) {
-  const all = new Float32Array(buf);
-  const tex = wallTextures();
-  for (const { style, offset, count } of index) {
-    const data = all.subarray(offset * 8, (offset + count) * 8);
-    const ib = new THREE.InterleavedBuffer(data, 8);
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.InterleavedBufferAttribute(ib, 3, 0));
-    g.setAttribute('uv', new THREE.InterleavedBufferAttribute(ib, 2, 3));
-    g.setAttribute('color', new THREE.InterleavedBufferAttribute(ib, 3, 5));
-    g.computeVertexNormals();
-    const mat = new THREE.MeshLambertMaterial({ map: tex[style], vertexColors: true, side: THREE.DoubleSide });
-    const mesh = new THREE.Mesh(g, mat);
-    mesh.castShadow = mesh.receiveShadow = true;
-    scene.add(mesh);
-  }
-}
-
-function indexFootprints(list) {
-  for (const poly of list) {
-    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
-    for (const [x, z] of poly) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z); }
-    const item = { poly, x0, x1, z0, z1 };
-    for (let cx = Math.floor(x0 / 20); cx <= Math.floor(x1 / 20); cx++)
-      for (let cz = Math.floor(z0 / 20); cz <= Math.floor(z1 / 20); cz++) {
-        const key = cx + ',' + cz;
-        if (!footGrid.has(key)) footGrid.set(key, []);
-        footGrid.get(key).push(item);
-      }
-  }
-}
-
-function insideBuilding(x, z) {
-  const cell = footGrid.get(Math.floor(x / 20) + ',' + Math.floor(z / 20));
-  if (!cell) return false;
-  for (const { poly, x0, x1, z0, z1 } of cell) {
-    if (x < x0 - 0.3 || x > x1 + 0.3 || z < z0 - 0.3 || z > z1 + 0.3) continue;
-    let inside = false;
-    for (let a = 0, b = poly.length - 1; a < poly.length; b = a++) {
-      const [xa, za] = poly[a], [xb, zb] = poly[b];
-      if ((za > z) !== (zb > z) && x < ((xb - xa) * (z - za)) / (zb - za) + xa) inside = !inside;
-    }
-    if (inside) return true;
-  }
-  return false;
-}
-
-// ---------- Bäume (sinnbildlich, Standorte und Höhen aus dem nDOM) ----------
-function buildTrees(buf) {
-  const d = new Int16Array(buf);
-  const count = d.length / 4;
-  const kinds = [];
-  for (let t = 0; t < count; t++) kinds.push((t * 0.618) % 1 < 0.85 ? 'kiefer' : 'laub');
-  const nK = kinds.filter((k) => k === 'kiefer').length;
-  const mk = (geo, color, n, flat = true) =>
-    new THREE.InstancedMesh(geo, new THREE.MeshLambertMaterial({ color, flatShading: flat }), n);
-  const pineCrown = mk(new THREE.IcosahedronGeometry(1, 0), 0x4f7a4a, nK);
-  const leafCrown = mk(new THREE.IcosahedronGeometry(1, 1), 0x7aa35a, count - nK);
-  const trunks = mk(new THREE.CylinderGeometry(0.7, 1, 1, 7).translate(0, 0.5, 0), 0x9a5f3e, count, false);
-  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3();
-  const up = new THREE.Vector3(0, 1, 0);
-  let a = 0, b = 0;
-  for (let t = 0; t < count; t++) {
-    const x = d[t * 4] / 10, z = d[t * 4 + 1] / 10, h = d[t * 4 + 2] / 10, r = d[t * 4 + 3] / 10;
-    const g = heightAt(x, z);
-    q.setFromAxisAngle(up, (t * 2.399) % 6.283);
-    let crownBottom;
-    if (kinds[t] === 'kiefer') {        // Kiefer: hoher, schlanker Stamm, flache Krone oben
-      const ry = Math.max(1.2, h * 0.16), rr = Math.min(r * 0.9, 4);
-      m.compose(p.set(x, g + h - ry, z), q, s.set(rr, ry, rr));
-      pineCrown.setMatrixAt(a++, m);
-      crownBottom = h - ry;
-    } else {                            // Laubbaum: runde Krone
-      const ry = Math.min(r * 1.1, h * 0.42);
-      m.compose(p.set(x, g + h - ry, z), q, s.set(r, ry, r));
-      leafCrown.setMatrixAt(b++, m);
-      crownBottom = h - ry;
-    }
-    const tw = 0.12 + h * 0.01;
-    m.compose(p.set(x, g - 0.2, z), q, s.set(tw, crownBottom + 0.4, tw));
-    trunks.setMatrixAt(t, m);
-  }
-  for (const im of [pineCrown, leafCrown, trunks]) { im.castShadow = true; im.receiveShadow = true; scene.add(im); }
-}
-
-function makeLabel(text, color = '#ffffff') {
-  const c = document.createElement('canvas');
-  c.width = 512; c.height = 128;
-  const g = c.getContext('2d');
-  g.font = 'bold 64px system-ui, sans-serif';
-  g.textAlign = 'center'; g.textBaseline = 'middle';
-  g.lineWidth = 10; g.strokeStyle = 'rgba(0,0,0,0.7)';
-  g.strokeText(text, 256, 64);
-  g.fillStyle = color; g.fillText(text, 256, 64);
-  const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, toneMapped: false }));
-  sp.scale.set(8, 2, 1);
-  return sp;
-}
-
-function buildHouseLabel() {
-  const { x, z, top, label } = meta.house;
-  const sp = makeLabel(label, '#ffcf8a');
-  sp.position.set(x, Math.max(top ?? 0, heightAt(x, z) + 6) + 3, z);
-  scene.add(sp);
+function walkable(x, z) {
+  if (onDeck(x, z) != null) return true;
+  if (!pointInPoly(x, z, M.area)) return false;
+  const g = terrainHeight(x, z);
+  if (g == null || g < M.water + 0.05) return false;      // nicht in den See laufen
+  return !solids.some((f) => pointInPoly(x, z, f));
 }
 
 // ---------- Spieler und Steuerung ----------
@@ -529,30 +263,35 @@ const keys = new Set();
 const joy = { x: 0, y: 0 };
 
 function goHome() {
-  const { x, z } = meta.house;
-  // freien Platz in der Nähe des Hauses suchen und das Haus anschauen
-  for (let d = 12; d < 60; d += 3)
-    for (let a = 180; a < 540; a += 30) {
-      const px = x + Math.sin(a * DEG) * d, pz = z + Math.cos(a * DEG) * d;
-      if (!insideBuilding(px, pz) && heightAt(px, pz) > meta.water + 0.3) {
-        teleport(px, pz, Math.atan2(-(x - px), -(z - pz)), -5 * DEG);
-        return;
-      }
-    }
-  teleport(x, z + 20, 0, 0);
+  // auf der Terrasse stehen und zum See schauen
+  const t = M.objects.terrasse;
+  const x = t ? t.x : 0, z = t ? t.z : 0;
+  const [sx, sz] = M.objects.steg.see;
+  teleport(x, z, Math.atan2(-(sx - x), -(sz - z)), -8 * DEG);
 }
 
-function teleport(x, z, yaw, pitch, eye = EYE) {
-  player.pos.set(x, heightAt(x, z) + eye, z);
+function overview() {
+  // schräg von der Seite auf das ganze Diorama schauen
+  const xs = M.area.map((p) => p[0]), zs = M.area.map((p) => p[1]);
+  const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cz = (Math.min(...zs) + Math.max(...zs)) / 2;
+  const span = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...zs) - Math.min(...zs));
+  player.fly = true;
+  $('btn-fly').classList.add('on');
+  const yaw = 1.15;                    // Blick von der Straße hinunter zum See (Nordwest)
+  player.pos.set(cx + Math.sin(yaw + 0.35) * span * 1.05, 8 + span * 0.7, cz + Math.cos(yaw + 0.35) * span * 1.05);
+  player.yaw = yaw + 0.05; player.pitch = -0.6;
+}
+
+function teleport(x, z, yaw, pitch) {
+  player.pos.set(x, (groundAt(x, z) ?? 0) + EYE, z);
   player.yaw = yaw; player.pitch = pitch; player.vy = 0;
 }
-
-function headingDeg() { return ((-player.yaw / DEG) % 360 + 360) % 360; }
 
 addEventListener('keydown', (e) => {
   keys.add(e.code);
   if (e.code === 'KeyF') toggleFly();
   if (e.code === 'KeyH') goHome();
+  if (e.code === 'KeyU') overview();
   if (e.code === 'Space' && !player.fly && player.onGround) { player.vy = JUMP; player.onGround = false; }
 });
 addEventListener('keyup', (e) => keys.delete(e.code));
@@ -560,31 +299,28 @@ addEventListener('keyup', (e) => keys.delete(e.code));
 function toggleFly() {
   player.fly = !player.fly;
   $('btn-fly').classList.toggle('on', player.fly);
-  if (!player.fly) player.vy = 0;
+  if (!player.fly) {
+    const g = groundAt(player.pos.x, player.pos.z);
+    if (g == null || !walkable(player.pos.x, player.pos.z)) goHome();
+    player.vy = 0;
+  }
 }
 
 const canvas = renderer.domElement;
 let locked = false;
 document.addEventListener('pointerlockchange', () => (locked = document.pointerLockElement === canvas));
-document.addEventListener('mousemove', (e) => {
-  if (!locked) return;
-  look(e.movementX * 0.0022, e.movementY * 0.0022);
-});
+document.addEventListener('mousemove', (e) => { if (locked) look(e.movementX * 0.0022, e.movementY * 0.0022); });
 function look(dx, dy) {
   player.yaw -= dx;
   player.pitch = THREE.MathUtils.clamp(player.pitch - dy, -1.5, 1.5);
 }
+canvas.addEventListener('click', () => { if (!isTouch && !locked) canvas.requestPointerLock(); });
 
-canvas.addEventListener('click', () => {
-  if (!isTouch && !locked) canvas.requestPointerLock();
-});
-
-// Touch: linke Hälfte = Joystick, rechte Hälfte = umsehen
+// Touch: linke Seite = gehen, rechte Seite = umsehen
 const touches = new Map();
 canvas.addEventListener('pointerdown', (e) => {
   if (e.pointerType !== 'touch') return;
-  const left = e.clientX < innerWidth * 0.4;
-  touches.set(e.pointerId, { left, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY });
+  touches.set(e.pointerId, { left: e.clientX < innerWidth * 0.4, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY });
 });
 canvas.addEventListener('pointermove', (e) => {
   const t = touches.get(e.pointerId);
@@ -593,9 +329,7 @@ canvas.addEventListener('pointermove', (e) => {
     joy.x = THREE.MathUtils.clamp((e.clientX - t.x0) / 50, -1, 1);
     joy.y = THREE.MathUtils.clamp((e.clientY - t.y0) / 50, -1, 1);
     $('stick').style.transform = `translate(${joy.x * 35}px, ${joy.y * 35}px)`;
-  } else {
-    look((e.clientX - t.x) * 0.005, (e.clientY - t.y) * 0.005);
-  }
+  } else look((e.clientX - t.x) * 0.005, (e.clientY - t.y) * 0.005);
   t.x = e.clientX; t.y = e.clientY;
 });
 const endTouch = (e) => {
@@ -615,85 +349,87 @@ function update(dt) {
   if (keys.has('KeyA') || keys.has('ArrowLeft')) mx -= 1;
   if (keys.has('KeyD') || keys.has('ArrowRight')) mx += 1;
   const fast = keys.has('ShiftLeft') || keys.has('ShiftRight');
-  const speed = player.fly ? (fast ? FLY_FAST : FLY) : fast ? RUN : WALK;
+  const speed = player.fly ? FLY * (fast ? 3 : 1) : fast ? RUN : WALK;
   const len = Math.hypot(mx, mz);
   if (len > 1) { mx /= len; mz /= len; }
-
   fwd.set(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
   right.set(-fwd.z, 0, fwd.x);
-  const dx = (fwd.x * mz + right.x * mx) * speed * dt;
-  const dz = (fwd.z * mz + right.z * mx) * speed * dt;
+  const dx = (fwd.x * mz + right.x * mx) * speed * dt, dz = (fwd.z * mz + right.z * mx) * speed * dt;
   const p = player.pos;
-  const lim = meta.walk_radius ?? HALF - 3;
-  const ok = (x, z) => Math.hypot(x, z) < lim && (player.fly || !insideBuilding(x, z));
-  if (ok(p.x + dx, p.z + dz)) { p.x += dx; p.z += dz; }
-  else if (ok(p.x + dx, p.z)) p.x += dx;
-  else if (ok(p.x, p.z + dz)) p.z += dz;
-
-  const ground = groundAt(p.x, p.z);
   if (player.fly) {
+    p.x += dx; p.z += dz;
     if (keys.has('Space')) p.y += speed * dt;
     if (keys.has('KeyC')) p.y -= speed * dt;
-    p.y = Math.max(p.y, ground + 0.5);
+    const g = groundAt(p.x, p.z);
+    if (g != null) p.y = Math.max(p.y, g + 0.5);
   } else {
+    if (walkable(p.x + dx, p.z + dz)) { p.x += dx; p.z += dz; }
+    else if (walkable(p.x + dx, p.z)) p.x += dx;
+    else if (walkable(p.x, p.z + dz)) p.z += dz;
+    const g = groundAt(p.x, p.z) ?? p.y - EYE;
     player.vy -= GRAVITY * dt;
     p.y += player.vy * dt;
-    if (p.y <= ground + EYE) { p.y = ground + EYE; player.vy = 0; player.onGround = true; }
+    if (p.y <= g + EYE) { p.y = g + EYE; player.vy = 0; player.onGround = true; }
   }
   camera.position.copy(p);
   camera.rotation.set(player.pitch, player.yaw, 0);
-
-
-  $('pos').textContent = `${Math.round(meta.origin[0] + p.x)} O · ${Math.round(meta.origin[1] - p.z)} N · ` +
-    `${(p.y - EYE + meta.base).toFixed(1)} m ü. NHN · Blick ${Math.round(headingDeg())}°`;
+  const heading = ((-player.yaw / DEG) % 360 + 360) % 360;
+  $('pos').textContent = `${(p.y - EYE + M.base).toFixed(1)} m ü. NHN · Blick ${Math.round(heading)}°`;
 }
+
+// ---------- Übersichtskarte: Grundstück als Umriss ----------
+const mini = $('minimap'), mctx = mini.getContext('2d');
+let mapView = null;
+function drawMinimap() {
+  const s = mini.width;
+  if (!mapView) {
+    const xs = M.area.map((p) => p[0]).concat(M.objects.steg.see[0]);
+    const zs = M.area.map((p) => p[1]).concat(M.objects.steg.see[1]);
+    const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cz = (Math.min(...zs) + Math.max(...zs)) / 2;
+    const span = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...zs) - Math.min(...zs)) * 1.15;
+    mapView = { cx, cz, k: s / span };
+  }
+  const { cx, cz, k } = mapView;
+  const tx = (x) => s / 2 + (x - cx) * k, tz = (z) => s / 2 + (z - cz) * k;
+  mctx.fillStyle = '#eef0f2'; mctx.fillRect(0, 0, s, s);
+  const poly = (pts, fill, stroke) => {
+    mctx.beginPath();
+    pts.forEach(([x, z], i) => (i ? mctx.lineTo(tx(x), tz(z)) : mctx.moveTo(tx(x), tz(z))));
+    mctx.closePath();
+    if (fill) { mctx.fillStyle = fill; mctx.fill(); }
+    if (stroke) { mctx.strokeStyle = stroke; mctx.stroke(); }
+  };
+  poly(M.waterArea, '#bcd3de');
+  poly(M.area, '#ece6d6');
+  poly(M.parcel, '#e4dcc8', '#8f8574');
+  M.buildings.forEach((b) => poly(b.foot, '#ffffff', '#666'));
+  const { land, see } = M.objects.steg;
+  mctx.strokeStyle = '#b79a78'; mctx.lineWidth = 3;
+  mctx.beginPath(); mctx.moveTo(tx(land[0]), tz(land[1])); mctx.lineTo(tx(see[0]), tz(see[1])); mctx.stroke();
+  mctx.lineWidth = 1.5;
+  mctx.save();
+  mctx.translate(tx(player.pos.x), tz(player.pos.z));
+  mctx.rotate(-player.yaw);
+  mctx.fillStyle = '#222';
+  mctx.beginPath(); mctx.moveTo(0, -7); mctx.lineTo(4.5, 5); mctx.lineTo(0, 2.5); mctx.lineTo(-4.5, 5); mctx.closePath();
+  mctx.fill();
+  mctx.restore();
+}
+mini.addEventListener('click', (e) => {
+  if (!mapView) return;
+  const r = mini.getBoundingClientRect();
+  const x = mapView.cx + ((e.clientX - r.left) / r.width * mini.width - mini.width / 2) / mapView.k;
+  const z = mapView.cz + ((e.clientY - r.top) / r.height * mini.width - mini.width / 2) / mapView.k;
+  if (player.fly) player.pos.set(x, player.pos.y, z);
+  else if (walkable(x, z)) teleport(x, z, player.yaw, player.pitch);
+});
 
 $('btn-fly').onclick = toggleFly;
 $('btn-home').onclick = goHome;
+$('btn-overview').onclick = overview;
 $('btn-help').onclick = () => { $('start').classList.remove('hidden'); document.exitPointerLock?.(); };
-$('btn-start').onclick = () => {
-  $('start').classList.add('hidden');
-  if (!isTouch) canvas.requestPointerLock();
-};
+$('btn-start').onclick = () => { $('start').classList.add('hidden'); if (!isTouch) canvas.requestPointerLock(); };
 
-// ---------- Übersichtskarte ----------
-const mini = $('minimap'), mctx = mini.getContext('2d');
-const miniImg = new Image();
-let miniBg = null;
-function initMinimap() {
-  miniImg.onload = () => {          // einmal klein vorzeichnen statt in jedem Bild das große Luftbild zu skalieren
-    miniBg = document.createElement('canvas');
-    miniBg.width = miniBg.height = mini.width;
-    miniBg.getContext('2d').drawImage(miniImg, 0, 0, mini.width, mini.width);
-  };
-  miniImg.src = 'data/dop.jpg?v=6';
-  mini.addEventListener('click', (e) => {
-    const r = mini.getBoundingClientRect();
-    const x = ((e.clientX - r.left) / r.width - 0.5) * 2 * HALF;
-    const z = ((e.clientY - r.top) / r.height - 0.5) * 2 * HALF;
-    if (Math.hypot(x, z) > (meta.walk_radius ?? HALF)) return;
-    if (player.fly) player.pos.set(x, Math.max(player.pos.y, heightAt(x, z) + 30), z);
-    else teleport(x, z, player.yaw, player.pitch);
-  });
-}
-function drawMinimap() {
-  const s = mini.width;
-  if (miniBg) mctx.drawImage(miniBg, 0, 0);
-  const k = s / (2 * HALF), toM = (v) => (v + HALF) * k;
-  mctx.strokeStyle = 'rgba(255,255,255,0.7)'; mctx.setLineDash([4, 4]);
-  mctx.beginPath(); mctx.arc(toM(0), toM(0), (meta.walk_radius ?? HALF) * k, 0, 7); mctx.stroke();
-  mctx.setLineDash([]);
-  const px = toM(player.pos.x), pz = toM(player.pos.z);
-  mctx.save();
-  mctx.translate(px, pz);
-  mctx.rotate(-player.yaw);
-  mctx.fillStyle = '#fff'; mctx.strokeStyle = '#000'; mctx.lineWidth = 1.5;
-  mctx.beginPath(); mctx.moveTo(0, -8); mctx.lineTo(5, 6); mctx.lineTo(0, 3); mctx.lineTo(-5, 6); mctx.closePath();
-  mctx.fill(); mctx.stroke();
-  mctx.restore();
-}
-
-// ---------- Hauptschleife ----------
 addEventListener('resize', () => {
   renderer.setSize(innerWidth, innerHeight);
   camera.aspect = innerWidth / innerHeight;
@@ -703,14 +439,13 @@ addEventListener('resize', () => {
 const clock = new THREE.Clock();
 let frame = 0;
 renderer.setAnimationLoop(() => {
-  if (!meta || !H) return;
+  if (!M) return;
   update(Math.min(clock.getDelta(), 0.1));
   renderer.render(scene, camera);
   if (frame++ % 4 === 0) drawMinimap();
 });
 
-// für Tests und die Browser-Konsole
-window.pinnow = { player, teleport, goHome, heightAt };
+window.pinnow = { player, teleport, goHome, overview, groundAt };
 
 load().catch((err) => {
   console.error(err);
