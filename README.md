@@ -1,7 +1,7 @@
 # Pinnow Walk
 
 Begehbares 3D-Modell der Landschaft rund um **Am See 89, 19065 Pinnow (OT Godern)** im Browser.
-Ausschnitt 1,2 km × 1,2 km um das Grundstück, mit Gelände, Luftbild, allen 3D-Gebäuden und Bäumen.
+Begehbar sind 100 m rund um das Grundstück: Gelände, Luftbild, 3D-Gebäude mit gezeichneten Fassaden (Putz, Klinker, Holz, Fenster, Dachziegel in der Dachfarbe aus dem Luftbild) und sinnbildliche Bäume.
 
 **Aufruf:** https://bunwichtig.github.io/pinnowwalk/ (sobald GitHub Pages eingeschaltet ist)
 
@@ -23,11 +23,11 @@ Repository hochgeladen. Hier landen nur daraus abgeleitete Texturen und Modelle,
 
 | Datei | Inhalt |
 |---|---|
-| `terrain.bin` | Geländehöhen aus DGM1, 2-m-Raster, 601 × 601 Werte (Uint16, cm über 27 m NHN) |
-| `dop_4k.jpg`, `dop_2k.jpg` | Luftbild (DOP) als Bodentextur, auch für die Dachfarben |
-| `buildings.bin` | LoD2-Gebäude (Dächer und Wände) als Dreiecke |
+| `terrain.bin` | Geländehöhen aus DGM1, 1-m-Raster, 261 × 261 Werte (Uint16, cm über 27 m NHN) |
+| `dop.jpg` | Luftbild (DOP, ca. 13 cm/Pixel) als Bodentextur; daraus auch die Dachfarben |
+| `buildings.bin` | LoD2-Gebäude als Dreiecke mit Texturkoordinaten und Farbe, nach Fassadenart gruppiert |
 | `footprints.json` | Gebäudegrundrisse, damit man nicht durch Wände läuft |
-| `trees.bin` | Baumstandorte und -höhen aus dem normalisierten Oberflächenmodell (nDOM) |
+| `trees.bin` | Sinnbildliche Bäume: hohe Bäume aus dem nDOM, mindestens 9 m Abstand |
 
 Neu erzeugen: `pip install -r tools/requirements.txt && python3 tools/build_data.py`
 

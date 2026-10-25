@@ -1,22 +1,50 @@
 {
  "crs": "EPSG:25833",
  "origin": [
-  270900.0,
-  5944710.0
+  270825.0,
+  5944840.0
  ],
- "half": 600,
+ "half": 130,
  "base": 27.0,
  "water": 0.78,
+ "walk_radius": 100,
  "terrain": {
-  "n": 601,
-  "step": 2,
+  "n": 261,
+  "step": 1,
   "scale": 0.01
  },
+ "buildings": [
+  {
+   "style": "dach",
+   "offset": 0,
+   "count": 615
+  },
+  {
+   "style": "putz",
+   "offset": 615,
+   "count": 597
+  },
+  {
+   "style": "klinker",
+   "offset": 1212,
+   "count": 351
+  },
+  {
+   "style": "holz",
+   "offset": 1563,
+   "count": 159
+  },
+  {
+   "style": "schuppen",
+   "offset": 1722,
+   "count": 636
+  }
+ ],
  "house": {
-  "x": -2.81,
-  "z": -2.27,
-  "top": 15.47,
-  "label": "Am See 89"
+  "x": -14.0,
+  "z": -13.0,
+  "top": null,
+  "label": "Grundstück"
  },
  "attribution": "© GeoBasis-DE/M-V 2026 (DGM1, nDOM, LoD2, DOP)"
 }

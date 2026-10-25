@@ -32,7 +32,7 @@ sky.material.uniforms.mieCoefficient.value = 0.004;
 sky.material.uniforms.mieDirectionalG.value = 0.8;
 sky.material.uniforms.sunPosition.value.copy(sun);
 scene.add(sky);
-scene.fog = new THREE.Fog(0xc9d8e6, 150, 900);
+scene.fog = new THREE.Fog(0xc9d8e6, 90, 320);
 
 scene.add(new THREE.HemisphereLight(0xdfeeff, 0x6b6a4a, 1.6));
 const sunLight = new THREE.DirectionalLight(0xfff3df, 2.6);
@@ -59,8 +59,7 @@ async function load() {
   for (let i = 0; i < raw.length; i++) H[i] = raw[i] * meta.terrain.scale;
 
   status('Lade Luftbild …');
-  const big = !isTouch && renderer.capabilities.maxTextureSize >= 4096;
-  const dop = await new THREE.TextureLoader().loadAsync(big ? 'data/dop_4k.jpg' : 'data/dop_2k.jpg');
+  const dop = await new THREE.TextureLoader().loadAsync('data/dop.jpg');
   dop.colorSpace = THREE.SRGBColorSpace;
   dop.anisotropy = renderer.capabilities.getMaxAnisotropy();
   buildTerrain(dop);
@@ -70,7 +69,7 @@ async function load() {
     fetch('data/buildings.bin').then((r) => r.arrayBuffer()),
     fetch('data/footprints.json').then((r) => r.json()),
   ]);
-  buildBuildings(bb, dop);
+  buildBuildings(bb, meta.buildings);
   indexFootprints(fp);
 
   status('Lade Bäume …');
@@ -141,30 +140,125 @@ function heightAt(x, z) {
   return dx + dz <= 1 ? a + (b - a) * dx + (c - a) * dz : d + (c - d) * (1 - dx) + (b - d) * (1 - dz);
 }
 
-// ---------- Gebäude (LoD2) ----------
-function buildBuildings(buf, dop) {
-  const [nr, nw] = new Uint32Array(buf, 0, 2);
-  const roofs = new Float32Array(buf, 8, nr);
-  const walls = new Float32Array(buf, 8 + nr * 4, nw);
-  const make = (arr, mat, uvFromAbove) => {
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.BufferAttribute(arr, 3));
-    if (uvFromAbove) {
-      const uv = new Float32Array((arr.length / 3) * 2);
-      for (let k = 0, m = 0; k < arr.length; k += 3, m += 2) {
-        uv[m] = (arr[k] + HALF) / (2 * HALF);
-        uv[m + 1] = 1 - (arr[k + 2] + HALF) / (2 * HALF);
+// ---------- Gebäude (LoD2) mit gezeichneten Texturen ----------
+const PX_PER_M = 170;
+
+function canvasTex(wm, hm, draw) {
+  const c = document.createElement('canvas');
+  c.width = Math.round(wm * PX_PER_M); c.height = Math.round(hm * PX_PER_M);
+  const g = c.getContext('2d');
+  draw(g, c.width, c.height, PX_PER_M);
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(1 / wm, 1 / hm);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  return t;
+}
+
+function noise(g, w, h, n, alpha) {
+  for (let k = 0; k < n; k++) {
+    const v = Math.random() * 255 | 0;
+    g.fillStyle = `rgba(${v},${v},${v},${alpha})`;
+    g.fillRect(Math.random() * w, Math.random() * h, 2, 2);
+  }
+}
+
+// Fenster in Zeichenkoordinaten (y nach unten); im Bild ist unten = Geschossboden
+function drawWindow(g, x, y, w, h, m, frame) {
+  g.fillStyle = 'rgba(0,0,0,0.25)';
+  g.fillRect(x - 0.05 * m, y + h, w + 0.1 * m, 0.06 * m);            // Fensterbank-Schatten
+  g.fillStyle = frame;
+  g.fillRect(x - 0.06 * m, y - 0.06 * m, w + 0.12 * m, h + 0.12 * m);
+  const glass = g.createLinearGradient(x, y, x + w, y + h);
+  glass.addColorStop(0, '#5d7a91'); glass.addColorStop(0.45, '#2a3c4c'); glass.addColorStop(1, '#45627a');
+  g.fillStyle = glass;
+  g.fillRect(x, y, w, h);
+  g.fillStyle = frame;
+  g.fillRect(x + w / 2 - 0.03 * m, y, 0.06 * m, h);                  // Mittelpfosten
+  g.fillRect(x, y + h * 0.32, w, 0.05 * m);                          // Kämpfer
+  g.fillStyle = '#cfcfcf';
+  g.fillRect(x - 0.08 * m, y + h + 0.06 * m, w + 0.16 * m, 0.05 * m); // Fensterbank
+}
+
+function wallTextures() {
+  const W = 3, H = 2.8;
+  const win = (g, w, h, m, frame) => drawWindow(g, 0.9 * m, h - 2.2 * m, 1.2 * m, 1.3 * m, m, frame);
+  return {
+    putz: canvasTex(W, H, (g, w, h, m) => {
+      g.fillStyle = '#f4f2ee'; g.fillRect(0, 0, w, h);
+      noise(g, w, h, 9000, 0.06);
+      win(g, w, h, m, '#ffffff');
+    }),
+    klinker: canvasTex(W, H, (g, w, h, m) => {
+      g.fillStyle = '#d8d2c8'; g.fillRect(0, 0, w, h);
+      const bw = 0.25 * m, bh = 0.075 * m, j = 0.012 * m;
+      for (let r = 0, y = 0; y < h; r++, y += bh)
+        for (let x = (r % 2) * -bw / 2; x < w; x += bw) {
+          const v = 0.85 + Math.random() * 0.3;
+          g.fillStyle = `rgb(${150 * v | 0},${62 * v | 0},${44 * v | 0})`;
+          g.fillRect(x + j, y + j, bw - 2 * j, bh - 2 * j);
+        }
+      win(g, w, h, m, '#f2f2f2');
+    }),
+    holz: canvasTex(W, H, (g, w, h, m) => {
+      const bw = 0.14 * m;
+      for (let x = 0; x < w; x += bw) {
+        const v = 215 + Math.random() * 30 | 0;
+        g.fillStyle = `rgb(${v},${v},${v})`; g.fillRect(x, 0, bw, h);
+        g.fillStyle = 'rgba(0,0,0,0.25)'; g.fillRect(x + bw - 0.012 * m, 0, 0.012 * m, h);
       }
-      g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
-    }
+      noise(g, w, h, 4000, 0.05);
+      win(g, w, h, m, '#f6f3ea');
+    }),
+    schuppen: canvasTex(W, H, (g, w, h, m) => {
+      const bw = 0.2 * m;
+      for (let x = 0; x < w; x += bw) {
+        const v = 190 + Math.random() * 50 | 0;
+        g.fillStyle = `rgb(${v},${v},${v})`; g.fillRect(x, 0, bw, h);
+        g.fillStyle = 'rgba(0,0,0,0.45)'; g.fillRect(x, 0, 0.02 * m, h);
+      }
+      for (let k = 0; k < 60; k++) {           // Maserung
+        g.strokeStyle = 'rgba(0,0,0,0.06)';
+        const x = Math.random() * w;
+        g.beginPath(); g.moveTo(x, 0); g.bezierCurveTo(x + 6, h / 3, x - 6, h * 2 / 3, x + 3, h); g.stroke();
+      }
+    }),
+    dach: canvasTex(1, 1, (g, w, h, m) => {
+      g.fillStyle = '#9a9a9a'; g.fillRect(0, 0, w, h);
+      const tw = 0.25 * m, th = 0.335 * m;
+      for (let r = 0, y = 0; y < h; r++, y += th)
+        for (let x = (r % 2) * tw / 2 - tw; x < w; x += tw) {
+          const v = 0.88 + Math.random() * 0.12;
+          const gr = g.createLinearGradient(x, 0, x + tw, 0);
+          gr.addColorStop(0, `rgb(${170 * v | 0},${170 * v | 0},${170 * v | 0})`);
+          gr.addColorStop(0.5, `rgb(${235 * v | 0},${235 * v | 0},${235 * v | 0})`);
+          gr.addColorStop(1, `rgb(${150 * v | 0},${150 * v | 0},${150 * v | 0})`);
+          g.fillStyle = gr;
+          g.fillRect(x + 1, y, tw - 2, th - 0.03 * m);
+          g.fillStyle = 'rgba(0,0,0,0.35)';
+          g.fillRect(x, y + th - 0.03 * m, tw, 0.03 * m);
+        }
+    }),
+  };
+}
+
+function buildBuildings(buf, index) {
+  const all = new Float32Array(buf);
+  const tex = wallTextures();
+  for (const { style, offset, count } of index) {
+    const data = all.subarray(offset * 8, (offset + count) * 8);
+    const ib = new THREE.InterleavedBuffer(data, 8);
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.InterleavedBufferAttribute(ib, 3, 0));
+    g.setAttribute('uv', new THREE.InterleavedBufferAttribute(ib, 2, 3));
+    g.setAttribute('color', new THREE.InterleavedBufferAttribute(ib, 3, 5));
     g.computeVertexNormals();
+    const mat = new THREE.MeshLambertMaterial({ map: tex[style], vertexColors: true, side: THREE.DoubleSide });
     const mesh = new THREE.Mesh(g, mat);
     mesh.castShadow = mesh.receiveShadow = true;
     scene.add(mesh);
-  };
-  // Dächer bekommen das Luftbild von oben, so sieht man echte Dachfarben
-  make(roofs, new THREE.MeshLambertMaterial({ map: dop, side: THREE.DoubleSide }), true);
-  make(walls, new THREE.MeshLambertMaterial({ color: 0xe6ddcc, side: THREE.DoubleSide }), false);
+  }
 }
 
 function indexFootprints(list) {
@@ -196,30 +290,42 @@ function insideBuilding(x, z) {
   return false;
 }
 
-// ---------- Bäume aus dem nDOM ----------
+// ---------- Bäume (sinnbildlich, Standorte und Höhen aus dem nDOM) ----------
 function buildTrees(buf) {
   const d = new Int16Array(buf);
   const count = d.length / 4;
-  const crownGeo = new THREE.IcosahedronGeometry(1, 1);
-  const trunkGeo = new THREE.CylinderGeometry(0.6, 1, 1, 6).translate(0, 0.5, 0);
-  const crowns = new THREE.InstancedMesh(crownGeo, new THREE.MeshLambertMaterial({ flatShading: true }), count);
-  const trunks = new THREE.InstancedMesh(trunkGeo, new THREE.MeshLambertMaterial({ color: 0x5a4632 }), count);
+  const kinds = [];
+  for (let t = 0; t < count; t++) kinds.push((t * 0.618) % 1 < 0.65 ? 'kiefer' : 'laub');
+  const nK = kinds.filter((k) => k === 'kiefer').length;
+  const mk = (geo, color, n, flat = true) =>
+    new THREE.InstancedMesh(geo, new THREE.MeshLambertMaterial({ color, flatShading: flat }), n);
+  const pineCrown = mk(new THREE.IcosahedronGeometry(1, 0), 0x4f7a4a, nK);
+  const leafCrown = mk(new THREE.IcosahedronGeometry(1, 1), 0x7aa35a, count - nK);
+  const trunks = mk(new THREE.CylinderGeometry(0.7, 1, 1, 7).translate(0, 0.5, 0), 0x8a5a3c, count, false);
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3();
-  const col = new THREE.Color();
+  const up = new THREE.Vector3(0, 1, 0);
+  let a = 0, b = 0;
   for (let t = 0; t < count; t++) {
     const x = d[t * 4] / 10, z = d[t * 4 + 1] / 10, h = d[t * 4 + 2] / 10, r = d[t * 4 + 3] / 10;
     const g = heightAt(x, z);
-    const ry = Math.min(r * 1.2, h * 0.45);
-    q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), (t * 2.399) % 6.283);
-    m.compose(p.set(x, g + h - ry, z), q, s.set(r, ry, r));
-    crowns.setMatrixAt(t, m);
-    col.setHSL(0.24 + ((t * 0.137) % 0.08), 0.38, 0.2 + ((t * 0.071) % 0.1));
-    crowns.setColorAt(t, col);
-    const tw = 0.12 + h * 0.012;
-    m.compose(p.set(x, g - 0.2, z), q, s.set(tw, h - ry + 0.2, tw));
+    q.setFromAxisAngle(up, (t * 2.399) % 6.283);
+    let crownBottom;
+    if (kinds[t] === 'kiefer') {        // Kiefer: hoher, schlanker Stamm, flache Krone oben
+      const ry = Math.max(1.2, h * 0.16), rr = Math.min(r * 0.9, 4);
+      m.compose(p.set(x, g + h - ry, z), q, s.set(rr, ry, rr));
+      pineCrown.setMatrixAt(a++, m);
+      crownBottom = h - ry;
+    } else {                            // Laubbaum: runde Krone
+      const ry = Math.min(r * 1.1, h * 0.42);
+      m.compose(p.set(x, g + h - ry, z), q, s.set(r, ry, r));
+      leafCrown.setMatrixAt(b++, m);
+      crownBottom = h - ry;
+    }
+    const tw = 0.12 + h * 0.01;
+    m.compose(p.set(x, g - 0.2, z), q, s.set(tw, crownBottom + 0.4, tw));
     trunks.setMatrixAt(t, m);
   }
-  for (const im of [crowns, trunks]) { im.castShadow = true; im.receiveShadow = true; scene.add(im); }
+  for (const im of [pineCrown, leafCrown, trunks]) { im.castShadow = true; im.receiveShadow = true; scene.add(im); }
 }
 
 function makeLabel(text, color = '#ffffff') {
@@ -241,7 +347,7 @@ function makeLabel(text, color = '#ffffff') {
 function buildHouseLabel() {
   const { x, z, top, label } = meta.house;
   const sp = makeLabel(label, '#ffcf8a');
-  sp.position.set(x, Math.max(top, heightAt(x, z) + 6) + 3, z);
+  sp.position.set(x, Math.max(top ?? 0, heightAt(x, z) + 6) + 3, z);
   scene.add(sp);
 }
 
@@ -346,8 +452,8 @@ function update(dt) {
   const dx = (fwd.x * mz + right.x * mx) * speed * dt;
   const dz = (fwd.z * mz + right.z * mx) * speed * dt;
   const p = player.pos;
-  const lim = HALF - 3;
-  const ok = (x, z) => Math.abs(x) < lim && Math.abs(z) < lim && (player.fly || !insideBuilding(x, z));
+  const lim = meta.walk_radius ?? HALF - 3;
+  const ok = (x, z) => Math.hypot(x, z) < lim && (player.fly || !insideBuilding(x, z));
   if (ok(p.x + dx, p.z + dz)) { p.x += dx; p.z += dz; }
   else if (ok(p.x + dx, p.z)) p.x += dx;
   else if (ok(p.x, p.z + dz)) p.z += dz;
@@ -385,11 +491,12 @@ $('btn-start').onclick = () => {
 const mini = $('minimap'), mctx = mini.getContext('2d');
 const miniImg = new Image();
 function initMinimap() {
-  miniImg.src = 'data/dop_2k.jpg';
+  miniImg.src = 'data/dop.jpg';
   mini.addEventListener('click', (e) => {
     const r = mini.getBoundingClientRect();
     const x = ((e.clientX - r.left) / r.width - 0.5) * 2 * HALF;
     const z = ((e.clientY - r.top) / r.height - 0.5) * 2 * HALF;
+    if (Math.hypot(x, z) > (meta.walk_radius ?? HALF)) return;
     if (player.fly) player.pos.set(x, Math.max(player.pos.y, heightAt(x, z) + 30), z);
     else teleport(x, z, player.yaw, player.pitch);
   });
@@ -398,6 +505,9 @@ function drawMinimap() {
   const s = mini.width;
   if (miniImg.complete && miniImg.naturalWidth) mctx.drawImage(miniImg, 0, 0, s, s);
   const k = s / (2 * HALF), toM = (v) => (v + HALF) * k;
+  mctx.strokeStyle = 'rgba(255,255,255,0.7)'; mctx.setLineDash([4, 4]);
+  mctx.beginPath(); mctx.arc(toM(0), toM(0), (meta.walk_radius ?? HALF) * k, 0, 7); mctx.stroke();
+  mctx.setLineDash([]);
   const px = toM(player.pos.x), pz = toM(player.pos.z);
   mctx.save();
   mctx.translate(px, pz);

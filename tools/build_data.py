@@ -25,15 +25,17 @@ from lxml import etree
 from PIL import Image, ImageDraw
 
 # Ursprung des lokalen Koordinatensystems (ETRS89 / UTM 33N, EPSG:25833), nahe Am See 89
-E0, N0 = 270900.0, 5944710.0
-HALF = 600            # Ausschnitt: 1200 m x 1200 m
-STEP = 2              # Rasterweite des Gelaendenetzes in m
+E0, N0 = 270825.0, 5944840.0  # Mitte zwischen den Fotostandorten (Huette/Terrasse) und der Eiche
+HALF = 130            # Ausschnitt: 260 m x 260 m (begehbar sind 100 m um das Haus)
+STEP = 1              # Rasterweite des Gelaendenetzes in m
 BASE = 27.0           # Hoehe (m ue. NHN), die im Modell y = 0 entspricht
 WATER = 27.78         # Wasserspiegel Pinnower See laut DGM1
 TILE = "33_270_5944_2"  # 2x2-km-Kachel, die den Ausschnitt enthaelt
 TILE_E, TILE_N = 270000, 5946000  # linke obere Ecke der Kachel
-HOUSE_E, HOUSE_N = 270897.77, 5944710.27  # Am See 89 (OSM/Nominatim)
-DOP_PX = 4096
+HOUSE_E, HOUSE_N = 270811.0, 5944853.0  # Grundstueck laut GPS der eigenen Fotos (OSM-Adresspunkt liegt ca. 170 m suedlich)
+DOP_PX = 2048         # ca. 13 cm pro Pixel
+TREE_SPACING = 9      # Mindestabstand der sinnbildlichen Baeume in m
+TREE_MIN_H = 5
 
 URLS = {
     "dgm": "https://www.geodaten-mv.de/dienste/dgm_download?index=4&dataset=ca268792-s2q1-4a39-b34c-9ec5bf9a4469&file=dgm1_{t}_gtiff.tif",
@@ -77,8 +79,8 @@ def build_terrain(dgm, out):
 
 def build_dop(png, out):
     im = Image.open(png).convert("RGB")
-    im.save(os.path.join(out, "dop_4k.jpg"), quality=82, optimize=True)
-    im.resize((2048, 2048), Image.LANCZOS).save(os.path.join(out, "dop_2k.jpg"), quality=85, optimize=True)
+    im.save(os.path.join(out, "dop.jpg"), quality=85, optimize=True)
+    return np.asarray(im)
 
 
 def newell(pts):
@@ -117,43 +119,114 @@ def triangulate(poly):
     return tris, allp
 
 
-def build_buildings(gml_bytes, out):
-    roofs, walls, footprints = [], [], []
+WALL_STYLES = ["putz", "klinker", "holz"]
+PUTZ_FARBEN = [(0.96, 0.94, 0.88), (0.95, 0.90, 0.78), (0.93, 0.93, 0.92), (0.96, 0.89, 0.80), (0.88, 0.90, 0.86)]
+
+
+def unit(v):
+    n = np.linalg.norm(v)
+    return v / n if n > 1e-9 else v
+
+
+def wall_uv(tris, nrm, z0):
+    # u: Meter entlang der Wand, v: Meter ueber dem Gebaeudeboden (damit Fenster geschossweise sitzen)
+    a = unit(np.array([-nrm[1], nrm[0], 0.0]))
+    p = tris.reshape(-1, 3)
+    u = (p - p[0]) @ a   # relativ zur Wand, sonst reicht die Float32-Genauigkeit im Browser nicht
+    return np.stack([u - np.floor(u.min()), p[:, 2] - z0], 1)
+
+
+def roof_uv(tris, nrm):
+    p = tris.reshape(-1, 3) - tris.reshape(-1, 3).min(0)
+    n = unit(nrm)
+    if abs(n[2]) > 0.97:
+        return p[:, :2].copy()
+    a = unit(np.array([-n[1], n[0], 0.0]))   # Traufrichtung
+    b = unit(np.cross(n, a))                 # Gefaellerichtung
+    return np.stack([p @ a, p @ b], 1)
+
+
+def roof_color(dop, pts):
+    # mittlere Farbe des Luftbilds unter dem Dach (innerer Bereich, um Raender zu meiden)
+    px = DOP_PX / (2 * HALF)
+    cols = (pts[:, 0] - (E0 - HALF)) * px
+    rows = ((N0 + HALF) - pts[:, 1]) * px
+    c0, c1 = np.percentile(cols, [25, 75]).astype(int)
+    r0, r1 = np.percentile(rows, [25, 75]).astype(int)
+    c0, r0 = max(c0, 0), max(r0, 0)
+    patch = dop[r0:max(r1, r0 + 1), c0:max(c1, c0 + 1)].reshape(-1, 3)
+    if len(patch) == 0:
+        return (0.55, 0.3, 0.25)
+    col = np.median(patch, 0) / 255.0
+    return tuple(np.clip(col * 1.15, 0.08, 0.95))
+
+
+def area2d(pts):
+    x, y = pts[:, 0], pts[:, 1]
+    return 0.5 * abs(np.dot(x, np.roll(y, 1)) - np.dot(y, np.roll(x, 1)))
+
+
+def build_buildings(gml_bytes, dop, out):
+    groups = {k: [] for k in ["dach"] + WALL_STYLES + ["schuppen"]}
+    footprints = []
     house = None
     root = etree.parse(io.BytesIO(gml_bytes))
     for b in root.iter("{%s}Building" % NS["bldg"]):
         grounds = b.findall(".//bldg:GroundSurface//gml:Polygon", NS)
         if not grounds:
             continue
-        gp = np.vstack([ring_points(g.find("gml:exterior/gml:LinearRing", NS)) for g in grounds])
+        grings = [ring_points(g.find("gml:exterior/gml:LinearRing", NS)) for g in grounds]
+        gp = np.vstack(grings)
         cx, cy = gp[:, 0].mean(), gp[:, 1].mean()
         if abs(cx - E0) > HALF - 5 or abs(cy - N0) > HALF - 5:
             continue
-        for kind, target in (("RoofSurface", roofs), ("WallSurface", walls)):
+        z0 = gp[:, 2].min()
+        top = b_top(b)
+        area = sum(area2d(r) for r in grings)
+        seed = int.from_bytes(b.get("{http://www.opengis.net/gml}id", "x").encode()[-6:], "little")
+        rng = np.random.default_rng(seed)
+        if area < 30 or top - z0 < 2.8:
+            style, wcol = "schuppen", (0.55, 0.42, 0.30) if rng.random() < 0.6 else (0.40, 0.45, 0.38)
+        else:
+            style = WALL_STYLES[int(rng.choice(3, p=[0.55, 0.3, 0.15]))]
+            wcol = {"putz": PUTZ_FARBEN[int(rng.integers(len(PUTZ_FARBEN)))],
+                    "klinker": (1.0, 1.0, 1.0), "holz": [(0.75, 0.55, 0.38), (0.55, 0.62, 0.55), (0.80, 0.30, 0.25)][int(rng.integers(3))]}[style]
+        roof_pts = [ring_points(p.find("gml:exterior/gml:LinearRing", NS)) for p in b.findall(".//bldg:RoofSurface//gml:Polygon", NS)]
+        rcol = roof_color(dop, np.vstack(roof_pts)) if roof_pts else (0.5, 0.3, 0.25)
+        for kind in ("RoofSurface", "WallSurface"):
             for poly in b.findall(".//bldg:%s//gml:Polygon" % kind, NS):
                 res = triangulate(poly)
                 if res is None:
                     continue
-                tris = res[0].reshape(-1, 3)
-                x, y, z = to_local(tris[:, 0], tris[:, 1], tris[:, 2])
-                target.append(np.stack([x, y, z], 1).astype(np.float32))
-        for g in grounds:
-            ring = ring_points(g.find("gml:exterior/gml:LinearRing", NS))
+                tris = res[0]
+                nrm = newell(ring_points(poly.find("gml:exterior/gml:LinearRing", NS)))
+                if kind == "RoofSurface":
+                    uv, col, g = roof_uv(tris, nrm), rcol, groups["dach"]
+                else:
+                    uv, col, g = wall_uv(tris, nrm, z0), wcol, groups[style]
+                p = tris.reshape(-1, 3)
+                x, y, z = to_local(p[:, 0], p[:, 1], p[:, 2])
+                c = np.tile(np.array(col, np.float32), (len(p), 1))
+                g.append(np.column_stack([x, y, z, uv, c]).astype(np.float32))
+        for ring in grings:
             loc = [[round(e - E0, 2), round(N0 - n, 2)] for e, n, _ in ring]
             footprints.append(loc)
             if house is None and point_in_poly(HOUSE_E - E0, N0 - HOUSE_N, loc):
                 house = {"x": round(float(ring[:, 0].mean() - E0), 2), "z": round(float(N0 - ring[:, 1].mean()), 2),
-                         "top": round(float(b_top(b) - BASE), 2)}
-    r = np.concatenate(roofs).ravel()
-    w = np.concatenate(walls).ravel()
+                         "top": round(float(top - BASE), 2)}
+    index, off = [], 0
     with open(os.path.join(out, "buildings.bin"), "wb") as f:
-        f.write(struct.pack("<II", r.size, w.size))
-        f.write(r.astype("<f4").tobytes())
-        f.write(w.astype("<f4").tobytes())
+        for name, parts in groups.items():
+            if not parts:
+                continue
+            arr = np.concatenate(parts).astype("<f4")
+            f.write(arr.tobytes())
+            index.append({"style": name, "offset": off, "count": len(arr)})
+            off += len(arr)
     with open(os.path.join(out, "footprints.json"), "w") as f:
         json.dump(footprints, f, separators=(",", ":"))
-    print("Gebaeude: Dachdreiecke", r.size // 9, "Wanddreiecke", w.size // 9, "Grundrisse", len(footprints))
-    return footprints, house
+    print("Gebaeude:", {g["style"]: g["count"] // 3 for g in index}, "Grundrisse", len(footprints))
+    return footprints, house, index
 
 
 def b_top(b):
@@ -185,16 +258,21 @@ def build_trees(ndom, footprints, out):
         for dx in range(-2, 3):
             grow |= np.roll(np.roll(m, dy, 0), dx, 1)
     a[grow] = 0
-    # lokale Maxima in einem 7x7-Fenster = Baumspitzen
+    # lokale Maxima = Baumspitzen; danach nur gut verteilte, hohe Baeume behalten (sinnbildlich)
     rad = 3
     pad = np.pad(a, rad)
     mx = np.zeros_like(a)
     for dy in range(2 * rad + 1):
         for dx in range(2 * rad + 1):
             mx = np.maximum(mx, pad[dy:dy + a.shape[0], dx:dx + a.shape[1]])
-    peak = (a >= 3.0) & (a >= mx - 1e-4)
+    peak = (a >= TREE_MIN_H) & (a >= mx - 1e-4)
     ys, xs = np.nonzero(peak)
     hs = a[ys, xs]
+    keep = []
+    for k in np.argsort(-hs):
+        if all((xs[k] - xs[q]) ** 2 + (ys[k] - ys[q]) ** 2 >= TREE_SPACING ** 2 for q in keep):
+            keep.append(k)
+    ys, xs, hs = ys[keep], xs[keep], hs[keep]
     x = xs + 0.5 - HALF
     z = ys + 0.5 - HALF
     rad_m = np.clip(0.22 * hs + 0.9, 1.4, 6.0)
@@ -215,19 +293,21 @@ def main():
     ndom = tifffile.imread(fetch(URLS["ndom"].format(t=TILE), os.path.join(a.cache, "ndom.tif")))
     lod2 = fetch(URLS["lod2"].format(t=TILE), os.path.join(a.cache, "lod2.zip"))
     dop = fetch(URLS["dop"].format(x0=E0 - HALF, y0=N0 - HALF, x1=E0 + HALF, y1=N0 + HALF, px=DOP_PX),
-                os.path.join(a.cache, "dop.png"))
+                os.path.join(a.cache, "dop_%d_%d.png" % (HALF, DOP_PX)))
 
     n = build_terrain(dgm, a.out)
-    build_dop(dop, a.out)
+    dop_img = build_dop(dop, a.out)
     with zipfile.ZipFile(lod2) as z:
         gml = z.read([nm for nm in z.namelist() if nm.lower().endswith(".gml")][0])
-    footprints, house = build_buildings(gml, a.out)
+    footprints, house, bindex = build_buildings(gml, dop_img, a.out)
     build_trees(ndom, footprints, a.out)
 
     meta = {
         "crs": "EPSG:25833", "origin": [E0, N0], "half": HALF, "base": BASE, "water": round(WATER - BASE, 2),
+        "walk_radius": 100,
         "terrain": {"n": n, "step": STEP, "scale": 0.01},
-        "house": dict(house or {"x": HOUSE_E - E0, "z": N0 - HOUSE_N, "top": 10}, label="Am See 89"),
+        "buildings": bindex,
+        "house": dict(house or {"x": HOUSE_E - E0, "z": N0 - HOUSE_N, "top": None}, label="Grundstück"),
         "attribution": "© GeoBasis-DE/M-V 2026 (DGM1, nDOM, LoD2, DOP)",
     }
     with open(os.path.join(a.out, "meta.json"), "w") as f:
