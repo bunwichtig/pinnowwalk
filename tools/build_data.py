@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Baut das Diorama von Am See 16, Pinnow (OT Godern), aus amtlichen Messdaten.
+"""Baut die Dioramen Am See 16 und Flurstück 111/89, Pinnow (OT Godern), aus amtlichen Messdaten.
 
 Alles im Modell stammt aus Messungen oder aus den eigenen Fotos, nichts ist erfunden:
   - Grundstücksgrenze: ALKIS-Flurstücke 111/90 und 111/91      (www.geodaten-mv.de/dienste/alkis_wms)
@@ -30,14 +30,22 @@ from shapely.ops import unary_union
 E0, N0 = 270780.0, 5944840.0          # Ursprung des lokalen Systems (UTM 33N, EPSG:25833)
 BASE = 27.0                           # m ü. NHN, entspricht y = 0
 WATER = 27.75                         # Wasserspiegel Pinnower See laut DGM1
-PARCELS = {"111/90": (270797.1, 5944829.1), "111/91": (270770.4, 5944848.1)}  # Abfragepunkt im Flurstück
 TILE = "33_270_5944_2"
 TILE_E, TILE_N = 270000, 5946000
 
 # Nach den Fotos: Steg mit Badeleiter (im Luftbild der Steg vor 111/91), Betonstufen den Hang hinab,
 # Terrasse mit Betonplatten und Wellblech-Vordach am Haus, umgedrehtes Boot und Beet am Steg.
-JETTY = ((270744.0, 5944853.0), (270737.0, 5944859.0))   # Landseite -> Seeende, aus dem Luftbild
-STAIR_TOP, STAIR_BOTTOM = (270782.0, 5944838.0), (270758.0, 5944853.0)
+# Je Diorama: Ursprung, Flurstücke (Abfragepunkt im Flurstück), Steg (Landseite -> Seeende, aus dem Luftbild)
+# und Treppe (oben -> unten). Steg, Treppe, Terrasse, Boot und Beet gibt es nur bei Am See 16.
+SITES = {
+    "am-see-16": {"title": "Am See 16", "sub": "Flurstücke 111/90 und 111/91", "origin": (270780.0, 5944840.0),
+                  "parcels": {"111/90": (270797.1, 5944829.1), "111/91": (270770.4, 5944848.1)},
+                  "jetty": ((270744.0, 5944853.0), (270737.0, 5944859.0)),
+                  "stairs": ((270782.0, 5944838.0), (270758.0, 5944853.0))},
+    "am-see-89": {"title": "Flurstück 89", "sub": "Flurstück 111/89, schräg gegenüber", "origin": (270823.0, 5944872.0),
+                  "parcels": {"111/89": (270823.3, 5944872.5)}, "jetty": None, "stairs": None},
+}
+PARCELS, JETTY, STAIRS = {}, None, None
 
 URLS = {
     "dgm": "https://www.geodaten-mv.de/dienste/dgm_download?index=4&dataset=ca268792-s2q1-4a39-b34c-9ec5bf9a4469&file=dgm1_{t}_gtiff.tif",
@@ -184,6 +192,9 @@ def vegetation(ndom, poly, foot_polys, h):
 def photo_objects(h, bld):
     hz = lambda e, n: round(float(h(e, n) - BASE), 2)
     objs = {}
+    if JETTY is None:
+        return objs
+    STAIR_TOP, STAIR_BOTTOM = STAIRS
     (le, ln), (we, wn) = JETTY
     objs["steg"] = {"land": list(loc(le, ln)), "see": list(loc(we, wn)), "width": 1.2, "y": round(WATER - BASE + 0.5, 2)}
     # Treppe: Betonstufen entlang der Linie oben -> unten, je 0,3 m Höhenunterschied eine Stufe
@@ -226,35 +237,45 @@ def main():
     ndom = tifffile.imread(fetch(URLS["ndom"].format(t=TILE), os.path.join(a.cache, "ndom.tif")))
     with zipfile.ZipFile(fetch(URLS["lod2"].format(t=TILE), os.path.join(a.cache, "lod2.zip"))) as z:
         gml = z.read([nm for nm in z.namelist() if nm.lower().endswith(".gml")][0])
-    parcel = parcel_polygon(a.cache)
     h = sampler(dgm)
+    for key, site in SITES.items():
+        build_site(key, site, a, h, ndom, gml)
+
+
+def build_site(key, site, a, h, ndom, gml):
+    global E0, N0, PARCELS, JETTY, STAIRS
+    E0, N0 = site["origin"]
+    PARCELS, JETTY, STAIRS = site["parcels"], site["jetty"], site["stairs"]
+    parcel = parcel_polygon(a.cache)
     # Das Grundstück endet ein paar Meter vor dem Wasser; der Uferstreifen bis zum Steg kommt dazu
     shore_pts = [p for p in parcel.exterior.coords if h(p[0], p[1]) < WATER + 1.0]
-    strip = MultiPoint(shore_pts + [JETTY[0]]).convex_hull.buffer(2.0)
-    poly = parcel.union(strip).buffer(0.01).buffer(-0.01)
+    poly, water = parcel, None
+    if JETTY:
+        strip = MultiPoint(shore_pts + [JETTY[0]]).convex_hull.buffer(2.0)
+        poly = parcel.union(strip).buffer(0.01).buffer(-0.01)
+        # Wasserfläche vor dem Ufer, bis über das Stegende hinaus
+        water = MultiPoint(shore_pts + [JETTY[0], JETTY[1]]).convex_hull.buffer(7).difference(poly)
+        if water.geom_type != "Polygon":
+            water = max(water.geoms, key=lambda g: g.area)
 
     ground = surface(poly, h)
     bld = buildings(gml, parcel)
     blocks, trunks = vegetation(ndom, parcel, [b["foot"] for b in bld], h)
     objs = photo_objects(h, bld)
-    # Wasserfläche vor dem Ufer, bis über das Stegende hinaus
-    water = MultiPoint(shore_pts + [JETTY[0], JETTY[1]]).convex_hull.buffer(7).difference(poly)
-    if water.geom_type != "Polygon":
-        water = max(water.geoms, key=lambda g: g.area)
 
     model = {
+        "title": site["title"], "subtitle": site["sub"],
         "crs": "EPSG:25833", "origin": [E0, N0], "base": BASE, "water": round(WATER - BASE, 2),
         "parcel": [list(loc(e, n)) for e, n in parcel.exterior.coords], "parcels": list(PARCELS),
         "area": [list(loc(e, n)) for e, n in poly.exterior.coords],
         "ground": ground, "buildings": bld, "vegetation": blocks, "trunks": trunks,
-        "objects": objs, "waterArea": [list(loc(e, n)) for e, n in water.exterior.coords],
+        "objects": objs, "waterArea": [list(loc(e, n)) for e, n in water.exterior.coords] if water else [],
         "attribution": "© GeoBasis-DE/M-V 2026 (ALKIS, DGM1, nDOM, LoD2)",
     }
-    with open(os.path.join(a.out, "model.json"), "w") as f:
+    with open(os.path.join(a.out, key + ".json"), "w") as f:
         json.dump(model, f, separators=(",", ":"), ensure_ascii=False)
-    print("Grundstück %.0f m², %d Geländedreiecke, %d Gebäude, %d Bewuchsblöcke, %d Stämme, %d Stufen" % (
-        poly.area, len(ground["tris"]), len(bld), len(blocks), len(trunks), len(objs["treppe"]["steps"])))
-    print(json.dumps(objs.get("terrasse")), objs["steg"])
+    print("%s: Grundstück %.0f m², %d Geländedreiecke, %d Gebäude, %d Bewuchsblöcke, %d Stämme" % (
+        key, poly.area, len(ground["tris"]), len(bld), len(blocks), len(trunks)))
 
 
 if __name__ == "__main__":

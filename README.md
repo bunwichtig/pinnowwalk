@@ -1,4 +1,4 @@
-# Pinnow Walk – Am See 16
+# Pinnow Walk – Am See 16 und Flurstück 89
 
 Begehbares Modell des Grundstücks **Am See 16, 19065 Pinnow (OT Godern)**, Flurstücke 111/90 und 111/91,
 als schlichtes Diorama ohne Texturen. Alle Formen kommen aus amtlichen Messdaten oder aus den eigenen Fotos;
@@ -24,7 +24,7 @@ Die eigenen Fotos liegen nicht in diesem Repository und werden nicht gezeigt.
 - Klick in die kleine Karte: dorthin gehen.
 
 ## Technik
-HTML, CSS, JavaScript mit [three.js](https://threejs.org) (MIT). Alle Daten stecken in `data/model.json`,
+HTML, CSS, JavaScript mit [three.js](https://threejs.org) (MIT). Alle Daten stecken in `data/am-see-16.json` und `data/am-see-89.json` (Flurstück 111/89, schräg gegenüber; Auswahl auf der Startseite oder per `?ort=89`),
 erzeugt mit `tools/build_data.py` (Python):
 
 ```

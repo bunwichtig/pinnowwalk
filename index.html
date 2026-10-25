@@ -16,7 +16,7 @@
 <canvas id="scene"></canvas>
 
 <div id="hud">
-  <div id="title">Pinnow · Am See 16</div>
+  <div id="title">Pinnow</div>
   <div id="pos"></div>
 </div>
 
@@ -30,8 +30,12 @@
 </div>
 
 <div id="start" class="panel">
-  <h1>Pinnow · Am See 16</h1>
-  <p>Begehbares Modell des Grundstücks (Flurstücke 111/90 und 111/91), gebaut aus amtlichen Messdaten und den eigenen Fotos.</p>
+  <div id="sites">
+    <button data-ort="16">Am See 16</button>
+    <button data-ort="89">Flurstück 89</button>
+  </div>
+  <h1 id="site-title">Pinnow</h1>
+  <p>Begehbares Modell des Grundstücks (<span id="site-sub"></span>), gebaut aus amtlichen Messdaten und den eigenen Fotos.</p>
   <div id="loading">Lade Daten …</div>
   <div id="help">
     <p><b>Computer:</b> Klicken, dann mit der Maus umsehen. <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> gehen, <kbd>Shift</kbd> rennen, <kbd>F</kbd> fliegen (<kbd>Leertaste</kbd>/<kbd>C</kbd> hoch/runter), <kbd>H</kbd> zur Terrasse, <kbd>U</kbd> Übersicht, <kbd>Esc</kbd> Maus freigeben.</p>
@@ -43,6 +47,6 @@
 <div id="joystick"><div id="stick"></div></div>
 <div id="attribution">Daten: © GeoBasis-DE/M-V 2026, <a href="https://www.geoportal-mv.de" target="_blank" rel="noopener">GeoPortal.MV</a> · 3D: three.js</div>
 
-<script type="module" src="js/main.js?v=7"></script>
+<script type="module" src="js/main.js?v=8"></script>
 </body>
 </html>

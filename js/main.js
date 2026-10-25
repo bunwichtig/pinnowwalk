@@ -45,8 +45,19 @@ let M;               // Modelldaten
 const terrainTris = [];
 const solids = [];   // Grundrisse, durch die man nicht laufen kann
 
+// Welches Grundstück: ?ort=16 (Standard) oder ?ort=89
+const SITE = new URLSearchParams(location.search).get('ort') === '89' ? '89' : '16';
+document.querySelectorAll('#sites button').forEach((b) => {
+  b.classList.toggle('on', b.dataset.ort === SITE);
+  b.onclick = () => { if (b.dataset.ort !== SITE) location.search = '?ort=' + b.dataset.ort; };
+});
+
 async function load() {
-  M = await (await fetch('data/model.json', { cache: 'no-cache' })).json();
+  M = await (await fetch(`data/am-see-${SITE}.json`, { cache: 'no-cache' })).json();
+  const name = 'Pinnow · ' + M.title;
+  $('title').textContent = $('site-title').textContent = document.title = name;
+  $('site-sub').textContent = M.subtitle;
+  $('btn-home').classList.toggle('hidden', !M.objects.terrasse);
   buildGround();
   buildWater();
   M.buildings.forEach(buildHouse);
@@ -131,6 +142,7 @@ function buildVegetation() {
 // ---------- Dinge von den Fotos ----------
 function buildPhotoObjects() {
   const o = M.objects;
+  if (!o.steg) return;
   // Steg mit Badeleiter
   const { land, see, width, y } = o.steg;
   const len = Math.hypot(see[0] - land[0], see[1] - land[1]) + 1.5;
@@ -265,7 +277,8 @@ const joy = { x: 0, y: 0 };
 function goHome() {
   // auf der Terrasse stehen und zum See schauen
   const t = M.objects.terrasse;
-  const x = t ? t.x : 0, z = t ? t.z : 0;
+  if (!t) return overview();
+  const x = t.x, z = t.z;
   const [sx, sz] = M.objects.steg.see;
   teleport(x, z, Math.atan2(-(sx - x), -(sz - z)), -8 * DEG);
 }
@@ -274,7 +287,8 @@ function overview() {
   // schräg von der Seite auf das ganze Diorama schauen
   const xs = M.area.map((p) => p[0]), zs = M.area.map((p) => p[1]);
   const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cz = (Math.min(...zs) + Math.max(...zs)) / 2;
-  const span = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...zs) - Math.min(...zs));
+  // kleine Grundstücke mit hohen Kiefern brauchen trotzdem Abstand
+  const span = Math.max(40, Math.max(...xs) - Math.min(...xs), Math.max(...zs) - Math.min(...zs));
   player.fly = true;
   $('btn-fly').classList.add('on');
   const yaw = 1.15;                    // Blick von der Straße hinunter zum See (Nordwest)
@@ -383,8 +397,9 @@ let mapView = null;
 function drawMinimap() {
   const s = mini.width;
   if (!mapView) {
-    const xs = M.area.map((p) => p[0]).concat(M.objects.steg.see[0]);
-    const zs = M.area.map((p) => p[1]).concat(M.objects.steg.see[1]);
+    const extra = M.objects.steg ? [M.objects.steg.see] : [];
+    const xs = M.area.concat(extra).map((p) => p[0]);
+    const zs = M.area.concat(extra).map((p) => p[1]);
     const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cz = (Math.min(...zs) + Math.max(...zs)) / 2;
     const span = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...zs) - Math.min(...zs)) * 1.15;
     mapView = { cx, cz, k: s / span };
@@ -399,13 +414,15 @@ function drawMinimap() {
     if (fill) { mctx.fillStyle = fill; mctx.fill(); }
     if (stroke) { mctx.strokeStyle = stroke; mctx.stroke(); }
   };
-  poly(M.waterArea, '#bcd3de');
+  if (M.waterArea.length) poly(M.waterArea, '#bcd3de');
   poly(M.area, '#ece6d6');
   poly(M.parcel, '#e4dcc8', '#8f8574');
   M.buildings.forEach((b) => poly(b.foot, '#ffffff', '#666'));
-  const { land, see } = M.objects.steg;
-  mctx.strokeStyle = '#b79a78'; mctx.lineWidth = 3;
-  mctx.beginPath(); mctx.moveTo(tx(land[0]), tz(land[1])); mctx.lineTo(tx(see[0]), tz(see[1])); mctx.stroke();
+  if (M.objects.steg) {
+    const { land, see } = M.objects.steg;
+    mctx.strokeStyle = '#b79a78'; mctx.lineWidth = 3;
+    mctx.beginPath(); mctx.moveTo(tx(land[0]), tz(land[1])); mctx.lineTo(tx(see[0]), tz(see[1])); mctx.stroke();
+  }
   mctx.lineWidth = 1.5;
   mctx.save();
   mctx.translate(tx(player.pos.x), tz(player.pos.z));
