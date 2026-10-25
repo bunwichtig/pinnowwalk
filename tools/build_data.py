@@ -25,14 +25,14 @@ from lxml import etree
 from PIL import Image, ImageDraw
 
 # Ursprung des lokalen Koordinatensystems (ETRS89 / UTM 33N, EPSG:25833), nahe Am See 89
-E0, N0 = 270825.0, 5944840.0  # Mitte zwischen den Fotostandorten (Huette/Terrasse) und der Eiche
+E0, N0 = 270799.0, 5944835.0  # Grundstueck (Google-Maps-Pin des Nutzers, 53.602123 N 11.535708 O)
 HALF = 130            # Ausschnitt: 260 m x 260 m (begehbar sind 100 m um das Haus)
 STEP = 1              # Rasterweite des Gelaendenetzes in m
 BASE = 27.0           # Hoehe (m ue. NHN), die im Modell y = 0 entspricht
 WATER = 27.78         # Wasserspiegel Pinnower See laut DGM1
 TILE = "33_270_5944_2"  # 2x2-km-Kachel, die den Ausschnitt enthaelt
 TILE_E, TILE_N = 270000, 5946000  # linke obere Ecke der Kachel
-HOUSE_E, HOUSE_N = 270811.0, 5944853.0  # Grundstueck laut GPS der eigenen Fotos (OSM-Adresspunkt liegt ca. 170 m suedlich)
+HOUSE_E, HOUSE_N = E0, N0  # der OSM-Adresspunkt "Am See 89" liegt ca. 170 m suedlich und passt nicht
 DOP_PX = 2048         # ca. 13 cm pro Pixel
 TREE_SPACING = 9      # Mindestabstand der sinnbildlichen Baeume in m
 TREE_MIN_H = 5
@@ -120,7 +120,9 @@ def triangulate(poly):
 
 
 WALL_STYLES = ["putz", "klinker", "holz"]
-PUTZ_FARBEN = [(0.96, 0.94, 0.88), (0.95, 0.90, 0.78), (0.93, 0.93, 0.92), (0.96, 0.89, 0.80), (0.88, 0.90, 0.86)]
+# Farben nach den Fotos vor Ort: helle bis cremegelbe Fassaden, dunkelbraune Holzhuetten
+PUTZ_FARBEN = [(0.96, 0.92, 0.80), (0.95, 0.88, 0.68), (0.94, 0.93, 0.90), (0.92, 0.86, 0.74)]
+HOLZ_FARBEN = [(0.42, 0.30, 0.21), (0.50, 0.36, 0.25), (0.93, 0.84, 0.60), (0.55, 0.60, 0.52)]
 
 
 def unit(v):
@@ -186,11 +188,11 @@ def build_buildings(gml_bytes, dop, out):
         seed = int.from_bytes(b.get("{http://www.opengis.net/gml}id", "x").encode()[-6:], "little")
         rng = np.random.default_rng(seed)
         if area < 30 or top - z0 < 2.8:
-            style, wcol = "schuppen", (0.55, 0.42, 0.30) if rng.random() < 0.6 else (0.40, 0.45, 0.38)
+            style, wcol = "schuppen", (0.42, 0.31, 0.22) if rng.random() < 0.7 else (0.30, 0.50, 0.45)
         else:
-            style = WALL_STYLES[int(rng.choice(3, p=[0.55, 0.3, 0.15]))]
+            style = WALL_STYLES[int(rng.choice(3, p=[0.35, 0.1, 0.55]))]
             wcol = {"putz": PUTZ_FARBEN[int(rng.integers(len(PUTZ_FARBEN)))],
-                    "klinker": (1.0, 1.0, 1.0), "holz": [(0.75, 0.55, 0.38), (0.55, 0.62, 0.55), (0.80, 0.30, 0.25)][int(rng.integers(3))]}[style]
+                    "klinker": (1.0, 1.0, 1.0), "holz": HOLZ_FARBEN[int(rng.integers(len(HOLZ_FARBEN)))]}[style]
         roof_pts = [ring_points(p.find("gml:exterior/gml:LinearRing", NS)) for p in b.findall(".//bldg:RoofSurface//gml:Polygon", NS)]
         rcol = roof_color(dop, np.vstack(roof_pts)) if roof_pts else (0.5, 0.3, 0.25)
         for kind in ("RoofSurface", "WallSurface"):

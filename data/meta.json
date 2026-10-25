@@ -1,8 +1,8 @@
 {
  "crs": "EPSG:25833",
  "origin": [
-  270825.0,
-  5944840.0
+  270799.0,
+  5944835.0
  ],
  "half": 130,
  "base": 27.0,
@@ -17,32 +17,32 @@
   {
    "style": "dach",
    "offset": 0,
-   "count": 615
+   "count": 567
   },
   {
    "style": "putz",
-   "offset": 615,
-   "count": 597
+   "offset": 567,
+   "count": 426
   },
   {
    "style": "klinker",
-   "offset": 1212,
-   "count": 351
+   "offset": 993,
+   "count": 30
   },
   {
    "style": "holz",
-   "offset": 1563,
-   "count": 159
+   "offset": 1023,
+   "count": 552
   },
   {
    "style": "schuppen",
-   "offset": 1722,
-   "count": 636
+   "offset": 1575,
+   "count": 606
   }
  ],
  "house": {
-  "x": -14.0,
-  "z": -13.0,
+  "x": 0.0,
+  "z": 0.0,
   "top": null,
   "label": "Grundstück"
  },

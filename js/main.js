@@ -295,13 +295,13 @@ function buildTrees(buf) {
   const d = new Int16Array(buf);
   const count = d.length / 4;
   const kinds = [];
-  for (let t = 0; t < count; t++) kinds.push((t * 0.618) % 1 < 0.65 ? 'kiefer' : 'laub');
+  for (let t = 0; t < count; t++) kinds.push((t * 0.618) % 1 < 0.85 ? 'kiefer' : 'laub');
   const nK = kinds.filter((k) => k === 'kiefer').length;
   const mk = (geo, color, n, flat = true) =>
     new THREE.InstancedMesh(geo, new THREE.MeshLambertMaterial({ color, flatShading: flat }), n);
   const pineCrown = mk(new THREE.IcosahedronGeometry(1, 0), 0x4f7a4a, nK);
   const leafCrown = mk(new THREE.IcosahedronGeometry(1, 1), 0x7aa35a, count - nK);
-  const trunks = mk(new THREE.CylinderGeometry(0.7, 1, 1, 7).translate(0, 0.5, 0), 0x8a5a3c, count, false);
+  const trunks = mk(new THREE.CylinderGeometry(0.7, 1, 1, 7).translate(0, 0.5, 0), 0x9a5f3e, count, false);
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3();
   const up = new THREE.Vector3(0, 1, 0);
   let a = 0, b = 0;
