@@ -11,20 +11,21 @@ if (isTouch) document.body.classList.add('touch');
 
 // ---------- Renderer, Szene, Licht ----------
 const renderer = new THREE.WebGLRenderer({ canvas: $('scene'), antialias: true });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setPixelRatio(Math.min(devicePixelRatio, isTouch ? 1.25 : 1.5));
 renderer.setSize(innerWidth, innerHeight);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 0.65;
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.type = THREE.PCFShadowMap;
+renderer.shadowMap.autoUpdate = false;   // alles steht still: Schatten nur einmal berechnen
 
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.2, 4000);
+const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.2, 1500);
 camera.rotation.order = 'YXZ';
 
 const sun = new THREE.Vector3().setFromSphericalCoords(1, (90 - 38) * DEG, 200 * DEG);
 const sky = new Sky();
-sky.scale.setScalar(3500);
+sky.scale.setScalar(1200);
 Object.assign(sky.material.uniforms, {});
 sky.material.uniforms.turbidity.value = 4;
 sky.material.uniforms.rayleigh.value = 1.2;
@@ -32,13 +33,13 @@ sky.material.uniforms.mieCoefficient.value = 0.004;
 sky.material.uniforms.mieDirectionalG.value = 0.8;
 sky.material.uniforms.sunPosition.value.copy(sun);
 scene.add(sky);
-scene.fog = new THREE.Fog(0xc9d8e6, 90, 320);
+scene.fog = new THREE.Fog(0xc9d8e6, 60, 220);
 
 scene.add(new THREE.HemisphereLight(0xdfeeff, 0x6b6a4a, 1.6));
 const sunLight = new THREE.DirectionalLight(0xfff3df, 2.6);
 sunLight.castShadow = true;
-sunLight.shadow.mapSize.set(2048, 2048);
-Object.assign(sunLight.shadow.camera, { left: -120, right: 120, top: 120, bottom: -120, near: 1, far: 800 });
+sunLight.shadow.mapSize.set(isTouch ? 1024 : 2048, isTouch ? 1024 : 2048);
+Object.assign(sunLight.shadow.camera, { left: -75, right: 75, top: 75, bottom: -75, near: 1, far: 600 });
 sunLight.shadow.bias = -0.0005;
 sunLight.shadow.normalBias = 0.4;
 scene.add(sunLight, sunLight.target);
@@ -59,7 +60,7 @@ async function load() {
   for (let i = 0; i < raw.length; i++) H[i] = raw[i] * meta.terrain.scale;
 
   status('Lade Bodenkarte …');
-  const ground = await new THREE.TextureLoader().loadAsync('data/ground.png?v=5');
+  const ground = await new THREE.TextureLoader().loadAsync('data/ground.png?v=6');
   buildTerrain(ground);
   buildJetties(meta.jetties || []);
 
@@ -77,6 +78,8 @@ async function load() {
 
   initMinimap();
 
+  sunLight.position.copy(sun).multiplyScalar(300);
+  renderer.shadowMap.needsUpdate = true;
   status('');
   $('btn-start').disabled = false;
   goHome();
@@ -204,7 +207,7 @@ function buildTerrain(groundMap) {
   // Umgebung außerhalb des Ausschnitts: flache Ebene, mit einer Schürze an den Geländerand angeschlossen
   const outerY = meta.water + 0.2;
   const outer = new THREE.Mesh(
-    new THREE.RingGeometry(size * 0.705, 4000, 4, 1, Math.PI / 4).rotateX(-Math.PI / 2),
+    new THREE.RingGeometry(size * 0.705, 1200, 4, 1, Math.PI / 4).rotateX(-Math.PI / 2),
     new THREE.MeshLambertMaterial({ color: 0x5f6b45 })
   );
   outer.position.y = outerY;
@@ -640,9 +643,6 @@ function update(dt) {
   camera.position.copy(p);
   camera.rotation.set(player.pitch, player.yaw, 0);
 
-  // Schattenbereich mit dem Spieler mitführen
-  sunLight.position.copy(p).addScaledVector(sun, 400);
-  sunLight.target.position.copy(p);
 
   $('pos').textContent = `${Math.round(meta.origin[0] + p.x)} O · ${Math.round(meta.origin[1] - p.z)} N · ` +
     `${(p.y - EYE + meta.base).toFixed(1)} m ü. NHN · Blick ${Math.round(headingDeg())}°`;
@@ -659,8 +659,14 @@ $('btn-start').onclick = () => {
 // ---------- Übersichtskarte ----------
 const mini = $('minimap'), mctx = mini.getContext('2d');
 const miniImg = new Image();
+let miniBg = null;
 function initMinimap() {
-  miniImg.src = 'data/dop.jpg';
+  miniImg.onload = () => {          // einmal klein vorzeichnen statt in jedem Bild das große Luftbild zu skalieren
+    miniBg = document.createElement('canvas');
+    miniBg.width = miniBg.height = mini.width;
+    miniBg.getContext('2d').drawImage(miniImg, 0, 0, mini.width, mini.width);
+  };
+  miniImg.src = 'data/dop.jpg?v=6';
   mini.addEventListener('click', (e) => {
     const r = mini.getBoundingClientRect();
     const x = ((e.clientX - r.left) / r.width - 0.5) * 2 * HALF;
@@ -672,7 +678,7 @@ function initMinimap() {
 }
 function drawMinimap() {
   const s = mini.width;
-  if (miniImg.complete && miniImg.naturalWidth) mctx.drawImage(miniImg, 0, 0, s, s);
+  if (miniBg) mctx.drawImage(miniBg, 0, 0);
   const k = s / (2 * HALF), toM = (v) => (v + HALF) * k;
   mctx.strokeStyle = 'rgba(255,255,255,0.7)'; mctx.setLineDash([4, 4]);
   mctx.beginPath(); mctx.arc(toM(0), toM(0), (meta.walk_radius ?? HALF) * k, 0, 7); mctx.stroke();
@@ -700,7 +706,7 @@ renderer.setAnimationLoop(() => {
   if (!meta || !H) return;
   update(Math.min(clock.getDelta(), 0.1));
   renderer.render(scene, camera);
-  if (frame++ % 3 === 0) drawMinimap();
+  if (frame++ % 4 === 0) drawMinimap();
 });
 
 // für Tests und die Browser-Konsole

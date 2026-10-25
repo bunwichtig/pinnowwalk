@@ -24,18 +24,20 @@ import tifffile
 from lxml import etree
 from PIL import Image, ImageDraw, ImageFilter
 
-# Ursprung des lokalen Koordinatensystems (ETRS89 / UTM 33N, EPSG:25833), nahe Am See 89
-E0, N0 = 270799.0, 5944835.0  # Grundstueck (Google-Maps-Pin des Nutzers, 53.602123 N 11.535708 O)
-HALF = 130            # Ausschnitt: 260 m x 260 m (begehbar sind 100 m um das Haus)
+# Ursprung des lokalen Koordinatensystems (ETRS89 / UTM 33N, EPSG:25833)
+E0, N0 = 270794.0, 5944834.0  # Am See 16 (OSM/Nominatim), passt zum Kartenpunkt des Nutzers
+HALF = 70             # Ausschnitt: 140 m x 140 m (begehbar: eigenes Grundstueck und Nachbarn)
+WALK_RADIUS = 55
 STEP = 1              # Rasterweite des Gelaendenetzes in m
 BASE = 27.0           # Hoehe (m ue. NHN), die im Modell y = 0 entspricht
 WATER = 27.78         # Wasserspiegel Pinnower See laut DGM1
 TILE = "33_270_5944_2"  # 2x2-km-Kachel, die den Ausschnitt enthaelt
 TILE_E, TILE_N = 270000, 5946000  # linke obere Ecke der Kachel
-HOUSE_E, HOUSE_N = E0, N0  # der OSM-Adresspunkt "Am See 89" liegt ca. 170 m suedlich und passt nicht
-DOP_PX = 2048         # ca. 13 cm pro Pixel
+HOUSE_E, HOUSE_N = E0, N0
+DOP_PX = 1024         # ca. 14 cm pro Pixel
 TREE_SPACING = 9      # Mindestabstand der sinnbildlichen Baeume in m
 TREE_MIN_H = 5
+TREE_MAX = 16
 
 URLS = {
     "dgm": "https://www.geodaten-mv.de/dienste/dgm_download?index=4&dataset=ca268792-s2q1-4a39-b34c-9ec5bf9a4469&file=dgm1_{t}_gtiff.tif",
@@ -278,6 +280,8 @@ def build_trees(ndom, footprints, out):
     ys, xs, hs = ys[keep], xs[keep], hs[keep]
     x = xs + 0.5 - HALF
     z = ys + 0.5 - HALF
+    inside = np.hypot(x, z) < WALK_RADIUS + 10
+    x, z, hs = x[inside][:TREE_MAX], z[inside][:TREE_MAX], hs[inside][:TREE_MAX]
     rad_m = np.clip(0.22 * hs + 0.9, 1.4, 6.0)
     arr = np.stack([x * 10, z * 10, hs * 10, rad_m * 10], 1).round().astype("<i2")
     arr.tofile(os.path.join(out, "trees.bin"))
@@ -307,10 +311,11 @@ def build_roads(osm_xml, out):
     print("Wege", len(roads))
 
 
-# Stege, aus dem Luftbild abgelesen (lokale Koordinaten: Landseite -> Seeende)
+# Stege, aus dem Luftbild abgelesen (Landseite -> Seeende), in UTM-Abweichung von JETTY_REF
 JETTIES = [((37.6, -117.1), (26.7, -122.5)), ((29.1, -104.0), (21.3, -110.0)), ((8.8, -74.0), (-2.0, -81.9)),
            ((-26.7, -35.0), (-34.5, -41.0)), ((-60.0, -18.0), (-67.0, -24.0)), ((-84.0, 17.3), (-90.0, 15.0)),
            ((-103.0, 85.0), (-110.0, 83.0))]
+JETTY_REF = (270799.0, 5944835.0)
 OUR_JETTY = 3  # dem GPS des Fotos vom eigenen Steg am naechsten
 
 
@@ -347,6 +352,10 @@ def build_ground(dop, ndom, footprints, roads_path, out):
     print("Bodenkarte", n, "x", n, "Anteile Rasen/Wald/Sand", rgb.reshape(-1, 3).mean(0).round(2))
 
 
+def jet_local(p):
+    return [round(p[0] + JETTY_REF[0] - E0, 2), round(p[1] - (JETTY_REF[1] - N0), 2)]
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--cache", default=os.path.join(os.path.dirname(__file__), "cache"))
@@ -381,11 +390,12 @@ def main():
 
     meta = {
         "crs": "EPSG:25833", "origin": [E0, N0], "half": HALF, "base": BASE, "water": round(WATER - BASE, 2),
-        "walk_radius": 100,
+        "walk_radius": WALK_RADIUS,
         "terrain": {"n": n, "step": STEP, "scale": 0.01},
         "buildings": bindex,
-        "jetties": [{"land": list(l), "see": list(w), "width": 1.3, "ours": k == OUR_JETTY} for k, (l, w) in enumerate(JETTIES)],
-        "house": dict(house or {"x": HOUSE_E - E0, "z": N0 - HOUSE_N, "top": None}, label="Grundstück"),
+        "jetties": [{"land": jet_local(l), "see": jet_local(w), "width": 1.3, "ours": k == OUR_JETTY}
+                    for k, (l, w) in enumerate(JETTIES) if max(abs(v) for v in jet_local(w)) < HALF - 2],
+        "house": dict(house or {"x": HOUSE_E - E0, "z": N0 - HOUSE_N, "top": None}, label="Am See 16"),
         "attribution": "© GeoBasis-DE/M-V 2026 (DGM1, nDOM, LoD2, DOP); Wege © OpenStreetMap-Mitwirkende (ODbL)",
     }
     with open(os.path.join(a.out, "meta.json"), "w") as f:
