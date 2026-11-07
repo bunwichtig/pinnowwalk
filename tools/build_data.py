@@ -40,12 +40,14 @@ TILE_E, TILE_N = 270000, 5946000
 SITES = {
     "am-see-16": {"title": "Am See 16", "sub": "Flurstücke 111/90 und 111/91", "origin": (270780.0, 5944840.0),
                   "parcels": {"111/90": (270797.1, 5944829.1), "111/91": (270770.4, 5944848.1)},
-                  "jetty": ((270744.0, 5944853.0), (270737.0, 5944859.0)),
-                  "stairs": ((270782.0, 5944838.0), (270758.0, 5944853.0))},
+                  # Steg am Nordost-Ende des Ufers (im Luftbild sichtbar), Boot und Beet daneben
+                  "jetty": ((270771.8, 5944868.5), (270762.3, 5944875.3)),
+                  "stairs": ((270784.2, 5944841.2), (270761.0, 5944857.6)),
+                  "boat": (270765.5, 5944858.0, 1.57), "bed": (270762.8, 5944863.7)},
     "am-see-89": {"title": "Flurstück 89", "sub": "Flurstück 111/89, schräg gegenüber", "origin": (270823.0, 5944872.0),
                   "parcels": {"111/89": (270823.3, 5944872.5)}, "jetty": None, "stairs": None},
 }
-PARCELS, JETTY, STAIRS = {}, None, None
+PARCELS, JETTY, STAIRS, SITE = {}, None, None, {}
 
 URLS = {
     "dgm": "https://www.geodaten-mv.de/dienste/dgm_download?index=4&dataset=ca268792-s2q1-4a39-b34c-9ec5bf9a4469&file=dgm1_{t}_gtiff.tif",
@@ -220,8 +222,10 @@ def photo_objects(h, bld):
                             "y": hz(E0 + tc[0], N0 - tc[1]), "w": 4.5, "d": 4.0,
                             "yaw": round(float(np.arctan2(lake[0], lake[1])), 3)}
         objs["vordach"] = dict(objs["terrasse"], h=2.4)
-    objs["boot"] = {"x": loc(le + 6, ln - 1)[0], "z": loc(le + 6, ln - 1)[1], "y": hz(le + 6, ln - 1), "yaw": 0.8}
-    objs["beet"] = {"x": loc(le + 9, ln - 4)[0], "z": loc(le + 9, ln - 4)[1], "y": hz(le + 9, ln - 4), "r": 1.6}
+    be, bn, byaw = SITE["boat"]
+    objs["boot"] = {"x": loc(be, bn)[0], "z": loc(be, bn)[1], "y": hz(be, bn), "yaw": byaw}
+    ee, en = SITE["bed"]
+    objs["beet"] = {"x": loc(ee, en)[0], "z": loc(ee, en)[1], "y": hz(ee, en), "r": 1.6}
     return objs
 
 
@@ -243,7 +247,8 @@ def main():
 
 
 def build_site(key, site, a, h, ndom, gml):
-    global E0, N0, PARCELS, JETTY, STAIRS
+    global E0, N0, PARCELS, JETTY, STAIRS, SITE
+    SITE = site
     E0, N0 = site["origin"]
     PARCELS, JETTY, STAIRS = site["parcels"], site["jetty"], site["stairs"]
     parcel = parcel_polygon(a.cache)
