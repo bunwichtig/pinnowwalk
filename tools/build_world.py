@@ -208,6 +208,7 @@ def main():
         "places": [
             {"name": "Am See 16", "e": 270794, "n": 5944834, "link": "diorama.html?ort=16"},
             {"name": "Flurstück 89", "e": 270823.3, "n": 5944872.5, "link": "diorama.html?ort=89"},
+            {"name": "Dorfstraße 2", "e": 271563.0, "n": 5944819.0, "link": "diorama.html?ort=dorf2"},
         ],
         "stats": tile_meta,
         "attribution": "© GeoBasis-DE/M-V 2026 (DGM1, nDOM, LoD2, DOP)",

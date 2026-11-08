@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 // Diorama von Am See 16: alle Formen aus Messdaten (ALKIS, DGM1, LoD2, nDOM) und den eigenen Fotos.
 // Bewusst ohne Texturen: schlichte, einfarbige Flächen wie bei einem Architekturmodell.
@@ -14,6 +15,11 @@ const COLORS = {
   ground: 0xd9cfb8, plinth: 0x8f8574, water: 0x8fb3c4, wall: 0xf4f1ea, roof: 0x8a8f96,
   leaf: [0x9fb98a, 0x8aab76, 0x7a9c68, 0x6c8e5c], trunk: 0x8a7462, wood: 0xb79a78, concrete: 0xc8c6c0,
   boat: 0xffffff, bed: 0x8c6f55, stone: 0xb0aaa0, roofSheet: 0xa9b0b5,
+  // Dorfstraße 2: Farben nach den Fotos bzw. Dachfarben aus dem Luftbild (vereinfacht)
+  walls: { brick: 0xb8705a, plaster: 0xe3d8c2, timber: 0x6f5c4b },
+  roofs: { grey: 0x8a8f96, tile: 0xbd6a4c, dark: 0x5d6166, moss: 0x7f7b5e },
+  road: 0xaaa69e, walk: 0xbf9282, fence: 0x6b5442, metal: 0x9aa0a4, shelter: 0x3f8f7a, glass: 0xcfe3e6,
+  sign: 0xd8c84a, parcel: 0xd0453a,
 };
 
 // ---------- Renderer, Szene, Licht ----------
@@ -45,28 +51,46 @@ let M;               // Modelldaten
 const terrainTris = [];
 const solids = [];   // Grundrisse, durch die man nicht laufen kann
 
-// Welches Grundstück: ?ort=16 (Standard) oder ?ort=89
-const SITE = new URLSearchParams(location.search).get('ort') === '89' ? '89' : '16';
+// Welches Diorama: ?ort=16 (Standard), ?ort=89 oder ?ort=dorf2
+const FILES = { 16: 'am-see-16', 89: 'am-see-89', dorf2: 'dorfstrasse-2' };
+const ORT = new URLSearchParams(location.search).get('ort');
+const SITE = ORT in FILES ? ORT : '16';
 document.querySelectorAll('#sites button').forEach((b) => {
   b.classList.toggle('on', b.dataset.ort === SITE);
   b.onclick = () => { if (b.dataset.ort !== SITE) location.search = '?ort=' + b.dataset.ort; };
 });
 
 async function load() {
-  M = await (await fetch(`data/am-see-${SITE}.json`, { cache: 'no-cache' })).json();
+  M = await (await fetch(`data/${FILES[SITE]}.json`, { cache: 'no-cache' })).json();
   const name = 'Pinnow · ' + M.title;
   $('title').textContent = $('site-title').textContent = document.title = name;
   $('site-sub').textContent = M.subtitle;
-  $('btn-home').classList.toggle('hidden', !M.objects.terrasse);
+  $('btn-home').classList.toggle('hidden', !M.objects.terrasse && !M.objects.platten);
+  if (M.attributionOsm) $('attribution').insertAdjacentText('beforeend', ' · ' + M.attributionOsm);
+  fitShadow();
   buildGround();
   buildWater();
-  M.buildings.forEach(buildHouse);
+  buildHouses();
   buildVegetation();
   buildPhotoObjects();
+  buildStreet();
   renderer.shadowMap.needsUpdate = true;
   $('loading').textContent = '';
   $('btn-start').disabled = false;
   overview();
+}
+
+// Schattenbereich an die Größe des Dioramas anpassen
+function fitShadow() {
+  const xs = M.area.map((p) => p[0]), zs = M.area.map((p) => p[1]);
+  const r = Math.max(40, (Math.max(...xs) - Math.min(...xs)) / 2 + 5, (Math.max(...zs) - Math.min(...zs)) / 2 + 5);
+  const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cz = (Math.min(...zs) + Math.max(...zs)) / 2;
+  Object.assign(sun.shadow.camera, { left: -r, right: r, top: r, bottom: -r, far: 200 + r * 2 });
+  sun.position.set(cx - 30, 60 + r * 0.5, cz + 40);
+  sun.target.position.set(cx, 0, cz);
+  scene.add(sun.target);
+  sun.shadow.camera.updateProjectionMatrix();
+  if (r > 60) { sun.shadow.mapSize.set(isTouch ? 2048 : 4096, isTouch ? 2048 : 4096); camera.far = 900; camera.updateProjectionMatrix(); }
 }
 
 // ---------- Gelände mit Sockel ----------
@@ -79,6 +103,7 @@ function buildGround() {
   g.computeVertexNormals();
   add(new THREE.Mesh(g, mat(COLORS.ground, { side: THREE.DoubleSide })));
   for (const t of tris) terrainTris.push(t.map((k) => verts[k]));
+  indexTerrain();
 
   // Seitenwände des Dioramas entlang der Grundstücksgrenze
   const w = [];
@@ -108,15 +133,21 @@ function buildWater() {
   scene.add(water);
 }
 
-// ---------- Haus aus LoD2 ----------
-function buildHouse(b) {
-  for (const [key, color] of [['wall', COLORS.wall], ['roof', COLORS.roof]]) {
+// ---------- Häuser aus LoD2 (je Farbe ein Netz, damit es flüssig bleibt) ----------
+function buildHouses() {
+  const buckets = new Map();
+  const put = (color, arr) => { if (!buckets.has(color)) buckets.set(color, []); buckets.get(color).push(...arr); };
+  for (const b of M.buildings) {
+    put(b.wallTone ? COLORS.walls[b.wallTone] : COLORS.wall, b.wall);
+    put(b.roofTone && M.radius ? COLORS.roofs[b.roofTone] : COLORS.roof, b.roof);
+    solids.push(b.foot);
+  }
+  for (const [color, pos] of buckets) {
     const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(b[key], 3));
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     g.computeVertexNormals();
     add(new THREE.Mesh(g, mat(color, { side: THREE.DoubleSide })));
   }
-  solids.push(b.foot);
 }
 
 // ---------- Bewuchs aus dem nDOM ----------
@@ -124,19 +155,19 @@ function buildVegetation() {
   const v = M.vegetation;
   const leaves = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), mat(0xffffff), v.length);
   const m = new THREE.Matrix4(), c = new THREE.Color();
-  v.forEach(([x, z, y, thick, h], k) => {
-    m.makeScale(0.96, thick, 0.96).setPosition(x, y + thick / 2, z);
+  v.forEach(([x, z, y, thick, h, size = 1], k) => {
+    m.makeScale(0.96 * size, thick, 0.96 * size).setPosition(x, y + thick / 2, z);
     leaves.setMatrixAt(k, m);
     c.setHex(COLORS.leaf[Math.min(3, Math.floor(h / 6))]);
     leaves.setColorAt(k, c);
   });
   add(leaves);
-  const tg = new THREE.CylinderGeometry(1, 1, 1, 6);
-  for (const [x, z, y0, y1, r] of M.trunks) {
-    const t = add(new THREE.Mesh(tg, mat(COLORS.trunk)));
-    t.scale.set(r, y1 - y0, r);
-    t.position.set(x, (y0 + y1) / 2, z);
-  }
+  const trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(1, 1, 1, 6), mat(COLORS.trunk), M.trunks.length);
+  M.trunks.forEach(([x, z, y0, y1, r], k) => {
+    m.makeScale(r, y1 - y0, r).setPosition(x, (y0 + y1) / 2, z);
+    trunks.setMatrixAt(k, m);
+  });
+  add(trunks);
 }
 
 // ---------- Dinge von den Fotos ----------
@@ -221,6 +252,146 @@ function buildPhotoObjects() {
   }
 }
 
+// ---------- Straße und Garten (Dorfstraße 2) ----------
+function meshFrom(d, color) {
+  if (!d || !d.tris.length) return;
+  const pos = [];
+  for (const t of d.tris) for (const k of t) pos.push(...d.verts[k]);
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.computeVertexNormals();
+  const mesh = new THREE.Mesh(g, mat(color, { polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
+  mesh.receiveShadow = true;
+  scene.add(mesh);
+}
+
+function buildStreet() {
+  const o = M.objects;
+  if (!M.radius) return;
+  meshFrom(M.roads, COLORS.road);
+  meshFrom(M.walks, COLORS.walk);
+
+  // Flurstück Dorfstraße 2 als rote Linie auf dem Boden
+  const line = M.parcel.map(([x, z]) => new THREE.Vector3(x, (terrainHeight(x, z) ?? 0) + 0.15, z));
+  const dense = [];
+  line.forEach((a, k) => {
+    const b = line[(k + 1) % line.length], n = Math.ceil(a.distanceTo(b) / 1.5);
+    for (let i = 0; i < n; i++) {
+      const p = a.clone().lerp(b, i / n);
+      p.y = (terrainHeight(p.x, p.z) ?? p.y) + 0.15;
+      dense.push(p);
+    }
+  });
+  scene.add(new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(dense), new THREE.LineBasicMaterial({ color: COLORS.parcel })));
+
+  const parts = { fence: [], metal: [], shelter: [], glass: [], sign: [], wood: [], concrete: [] };
+  const box = (kind, w, h, d, x, y, z, yaw = 0, pitch = 0) => {
+    const g = new THREE.BoxGeometry(w, h, d);
+    if (pitch) g.rotateX(pitch);
+    g.rotateY(yaw).translate(x, y, z);
+    parts[kind].push(g);
+  };
+  const cyl = (kind, r, h, x, y, z) => parts[kind].push(new THREE.CylinderGeometry(r, r, h, 6).translate(x, y, z));
+
+  // Holzlattenzaun an der Straße
+  for (const f of o.zaun) {
+    for (let k = 0; k + 1 < f.length; k++) {
+      const [x0, z0, y0] = f[k], [x1, z1, y1] = f[k + 1];
+      const len = Math.hypot(x1 - x0, z1 - z0), yaw = Math.atan2(x1 - x0, z1 - z0);
+      const n = Math.max(1, Math.round(len / 0.12));
+      for (let i = 0; i < n; i += 1) {
+        const t = (i + 0.5) / n;
+        box('fence', 0.07, 1.15, 0.02, x0 + (x1 - x0) * t, y0 + (y1 - y0) * t + 0.57, z0 + (z1 - z0) * t, yaw + Math.PI / 2);
+        i++;      // Latte, Lücke, Latte …
+      }
+      box('fence', 0.05, 0.08, len, (x0 + x1) / 2, (y0 + y1) / 2 + 0.3, (z0 + z1) / 2, yaw);
+      box('fence', 0.05, 0.08, len, (x0 + x1) / 2, (y0 + y1) / 2 + 0.9, (z0 + z1) / 2, yaw);
+      box('fence', 0.1, 1.25, 0.1, x0, y0 + 0.6, z0);
+    }
+  }
+  // Doppelkopf-Laternen
+  for (const [x, z, y] of o.laternen) {
+    cyl('metal', 0.07, 5.2, x, y + 2.6, z);
+    for (const s of [-1, 1]) {
+      box('metal', 0.7, 0.05, 0.05, x + s * 0.35, y + 5.15, z);
+      parts.metal.push(new THREE.ConeGeometry(0.28, 0.3, 8).translate(x + s * 0.7, y + 4.95, z));
+    }
+  }
+  // Wartehäuschen: grüner Rahmen, Glaswände, flaches Dach
+  for (const [x, z, y, , away] of o.haeuschen) {
+    const ca = Math.cos(away), sa = Math.sin(away);
+    const at = (lx, lz) => [x + lx * ca + lz * sa, z - lx * sa + lz * ca];
+    for (const [lx, lz] of [[-1.6, -0.7], [1.6, -0.7], [-1.6, 0.7], [1.6, 0.7]]) {
+      const [px, pz] = at(lx, lz);
+      box('shelter', 0.08, 2.3, 0.08, px, y + 1.15, pz, away);
+    }
+    const [rx, rz] = at(0, 0);
+    box('shelter', 3.5, 0.1, 1.7, rx, y + 2.35, rz, away, -0.05);
+    const [bx, bz] = at(0, 0.68);
+    box('glass', 3.2, 2.0, 0.03, bx, y + 1.15, bz, away);
+    for (const s of [-1, 1]) {
+      const [sx, sz] = at(s * 1.58, 0);
+      box('glass', 0.03, 2.0, 1.3, sx, y + 1.15, sz, away);
+    }
+    const [bnx, bnz] = at(0, 0.4);
+    box('wood', 2.2, 0.06, 0.4, bnx, y + 0.45, bnz, away);
+  }
+  // Haltestellenschilder
+  for (const [x, z, y] of o.haltestellen) {
+    cyl('metal', 0.035, 2.6, x, y + 1.3, z);
+    parts.sign.push(new THREE.CylinderGeometry(0.22, 0.22, 0.03, 16).rotateX(Math.PI / 2).translate(x, y + 2.45, z));
+  }
+  // Terrasse aus großen hellen Platten vor dem Backsteingiebel
+  if (o.platten) {
+    const t = o.platten, ca = Math.cos(t.yaw), sa = Math.sin(t.yaw);
+    for (let i = 0; i < Math.floor(t.w / 0.8); i++)
+      for (let j = 0; j < Math.floor(t.d / 0.8); j++) {
+        const lx = -t.w / 2 + 0.4 + i * 0.8, lz = -t.d / 2 + 0.4 + j * 0.8;
+        box('concrete', 0.76, 0.12, 0.76, t.x + lx * ca + lz * sa, t.y + 0.06, t.z - lx * sa + lz * ca, t.yaw);
+      }
+    decks.push({ x0: t.x - sa * t.d / 2, z0: t.z - ca * t.d / 2, x1: t.x + sa * t.d / 2, z1: t.z + ca * t.d / 2, width: t.w, y: t.y + 0.12, flat: true });
+  }
+  // Holzbalkon im verputzten Giebel: Boden, Brüstung aus senkrechten Brettern, zwei Stützen
+  if (o.balkon) {
+    const t = o.balkon, ca = Math.cos(t.yaw), sa = Math.sin(t.yaw);
+    const at = (lx, lz) => [t.x + lx * ca + lz * sa, t.z - lx * sa + lz * ca];
+    box('fence', t.w, 0.12, t.d, t.x, t.y, t.z, t.yaw);
+    const [fx, fz] = at(0, t.d / 2);
+    box('fence', t.w, 0.08, 0.06, fx, t.y + 1.0, fz, t.yaw);
+    for (let lx = -t.w / 2; lx <= t.w / 2 + 0.01; lx += 0.16) {
+      const [px, pz] = at(lx, t.d / 2);
+      box('fence', 0.1, 0.95, 0.03, px, t.y + 0.5, pz, t.yaw);
+    }
+    for (const s of [-1, 1]) {
+      const [sx, sz] = at(s * (t.w / 2 - 0.1), 0);
+      box('fence', 0.05, 1.0, t.d, sx, t.y + 0.5, sz, t.yaw);
+    }
+  }
+  // Wäscheleine: zwei Holzpfosten mit Querholz, dazwischen vier Leinen
+  if (o.waesche) {
+    const { a, b, h } = o.waesche;
+    const yaw = Math.atan2(b[0] - a[0], b[1] - a[1]);
+    for (const [x, z, y] of [a, b]) {
+      box('wood', 0.12, h, 0.12, x, y + h / 2, z);
+      box('wood', 0.08, 0.1, 1.0, x, y + h - 0.1, z, yaw + Math.PI / 2);
+    }
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    for (const off of [-0.4, -0.13, 0.13, 0.4]) {
+      const ox = Math.cos(yaw) * off, oz = -Math.sin(yaw) * off;
+      box('metal', 0.015, 0.015, len, (a[0] + b[0]) / 2 + ox, (a[2] + b[2]) / 2 + h - 0.12, (a[1] + b[1]) / 2 + oz, yaw);
+    }
+  }
+  const colors = { fence: COLORS.fence, metal: COLORS.metal, shelter: COLORS.shelter, sign: COLORS.sign, wood: COLORS.wood, concrete: COLORS.concrete };
+  for (const [kind, list] of Object.entries(parts)) {
+    if (!list.length) continue;
+    const g = mergeGeometries(list.map((x) => x.toNonIndexed()));
+    const m = kind === 'glass'
+      ? new THREE.Mesh(g, new THREE.MeshLambertMaterial({ color: COLORS.glass, transparent: true, opacity: 0.35 }))
+      : add(new THREE.Mesh(g, mat(colors[kind])));
+    if (kind === 'glass') scene.add(m);
+  }
+}
+
 // ---------- Höhe, Grenzen ----------
 const decks = [];
 const down = new THREE.Raycaster(), tmpV = new THREE.Vector3(), DOWN = new THREE.Vector3(0, -1, 0);
@@ -234,8 +405,23 @@ function pointInPoly(x, z, poly) {
   return inside;
 }
 
+// Dreiecke nach 4-m-Feldern einsortieren, damit die Höhensuche auch bei großen Dioramen schnell ist
+const CELL = 4, cells = new Map();
+function indexTerrain() {
+  for (const t of terrainTris) {
+    const xs = t.map((p) => p[0]), zs = t.map((p) => p[2]);
+    for (let i = Math.floor(Math.min(...xs) / CELL); i <= Math.floor(Math.max(...xs) / CELL); i++)
+      for (let j = Math.floor(Math.min(...zs) / CELL); j <= Math.floor(Math.max(...zs) / CELL); j++) {
+        const key = i * 10000 + j;
+        if (!cells.has(key)) cells.set(key, []);
+        cells.get(key).push(t);
+      }
+  }
+}
+
 function terrainHeight(x, z) {
-  for (const [a, b, c] of terrainTris) {
+  const list = cells.get(Math.floor(x / CELL) * 10000 + Math.floor(z / CELL)) || [];
+  for (const [a, b, c] of list) {
     const d = (b[2] - c[2]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[2] - c[2]);
     const l1 = ((b[2] - c[2]) * (x - c[0]) + (c[0] - b[0]) * (z - c[2])) / d;
     const l2 = ((c[2] - a[2]) * (x - c[0]) + (a[0] - c[0]) * (z - c[2])) / d;
@@ -249,7 +435,7 @@ function onDeck(x, z) {
   for (const j of decks) {
     const dx = j.x1 - j.x0, dz = j.z1 - j.z0, L2 = dx * dx + dz * dz;
     const t = ((x - j.x0) * dx + (z - j.z0) * dz) / L2;
-    if (t < -0.2 || t > 1.1) continue;
+    if (t < (j.flat ? 0 : -0.2) || t > (j.flat ? 1 : 1.1)) continue;
     if (Math.hypot(x - (j.x0 + t * dx), z - (j.z0 + t * dz)) < j.width / 2) return j.y;
   }
   return null;
@@ -276,6 +462,11 @@ const joy = { x: 0, y: 0 };
 
 function goHome() {
   // auf der Terrasse stehen und zum See schauen
+  if (M.objects.platten) {
+    // auf der Terrasse stehen und in den Garten schauen
+    const p = M.objects.platten;
+    return teleport(p.x, p.z, p.yaw + Math.PI, -6 * DEG);
+  }
   const t = M.objects.terrasse;
   if (!t) return overview();
   const x = t.x, z = t.z;
@@ -291,6 +482,13 @@ function overview() {
   const span = Math.max(40, Math.max(...xs) - Math.min(...xs), Math.max(...zs) - Math.min(...zs));
   player.fly = true;
   $('btn-fly').classList.add('on');
+  if (M.radius) {
+    // großer Umkreis: von Südosten über die Einmündung auf das Haus schauen
+    const yaw = 0.75;
+    player.pos.set(Math.sin(yaw) * 70, 55, Math.cos(yaw) * 70);
+    player.yaw = yaw; player.pitch = -0.55;
+    return;
+  }
   const yaw = 1.15;                    // Blick von der Straße hinunter zum See (Nordwest)
   player.pos.set(cx + Math.sin(yaw + 0.35) * span * 1.05, 8 + span * 0.7, cz + Math.cos(yaw + 0.35) * span * 1.05);
   player.yaw = yaw + 0.05; player.pitch = -0.6;
@@ -392,7 +590,8 @@ function update(dt) {
 }
 
 // ---------- Übersichtskarte: Grundstück als Umriss ----------
-const mini = $('minimap'), mctx = mini.getContext('2d');
+const mini = $('minimap');
+let mctx = mini.getContext('2d');
 let mapView = null;
 function drawMinimap() {
   const s = mini.width;
@@ -406,6 +605,16 @@ function drawMinimap() {
   }
   const { cx, cz, k } = mapView;
   const tx = (x) => s / 2 + (x - cx) * k, tz = (z) => s / 2 + (z - cz) * k;
+  if (mapView.bg) {
+    mctx.drawImage(mapView.bg, 0, 0);
+    drawPlayer(tx, tz);
+    return;
+  }
+  // unbewegliche Teile nur einmal zeichnen und dann wiederverwenden
+  const real = mctx;
+  mapView.bg = document.createElement('canvas');
+  mapView.bg.width = mapView.bg.height = s;
+  mctx = mapView.bg.getContext('2d');
   mctx.fillStyle = '#eef0f2'; mctx.fillRect(0, 0, s, s);
   const poly = (pts, fill, stroke) => {
     mctx.beginPath();
@@ -416,13 +625,29 @@ function drawMinimap() {
   };
   if (M.waterArea.length) poly(M.waterArea, '#bcd3de');
   poly(M.area, '#ece6d6');
-  poly(M.parcel, '#e4dcc8', '#8f8574');
+  if (M.radius) {
+    mctx.lineWidth = 1;
+    for (const [d, c] of [[M.roads, '#aaa69e'], [M.walks, '#c9a294']]) {
+      mctx.fillStyle = c;
+      for (const t of d.tris) {
+        mctx.beginPath();
+        t.forEach((k, i) => { const v = d.verts[k]; i ? mctx.lineTo(tx(v[0]), tz(v[2])) : mctx.moveTo(tx(v[0]), tz(v[2])); });
+        mctx.fill();
+      }
+    }
+    poly(M.parcel, null, '#d0453a');
+  } else poly(M.parcel, '#e4dcc8', '#8f8574');
   M.buildings.forEach((b) => poly(b.foot, '#ffffff', '#666'));
   if (M.objects.steg) {
     const { land, see } = M.objects.steg;
     mctx.strokeStyle = '#b79a78'; mctx.lineWidth = 3;
     mctx.beginPath(); mctx.moveTo(tx(land[0]), tz(land[1])); mctx.lineTo(tx(see[0]), tz(see[1])); mctx.stroke();
   }
+  mctx = real;
+  mctx.drawImage(mapView.bg, 0, 0);
+  drawPlayer(tx, tz);
+}
+function drawPlayer(tx, tz) {
   mctx.lineWidth = 1.5;
   mctx.save();
   mctx.translate(tx(player.pos.x), tz(player.pos.z));
