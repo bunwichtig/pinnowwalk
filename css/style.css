@@ -38,6 +38,7 @@ code { font-size: 12px; }
 
 #toolbar { position: fixed; right: 12px; top: 10px; z-index: 6; display: flex; gap: 6px; }
 #toolbar button { background: var(--panel); }
+#toolbar button.on { background: var(--accent); color: #222; }
 
 #minimap { position: fixed; right: 12px; bottom: 30px; width: 200px; height: 200px; z-index: 5; border-radius: 10px;
   border: 1px solid var(--line); cursor: crosshair; }
@@ -55,3 +56,6 @@ body.touch #joystick { display: block; }
   #toolbar button { padding: 6px 8px; }
   #title { font-size: 14px; }
 }
+a.btn { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+  padding: 6px 10px; text-decoration: none; }
+.panel a { color: var(--accent); }

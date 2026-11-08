@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Pinnow Weltkarte</title>
+<link rel="stylesheet" href="css/style.css?v=10">
+<link rel="stylesheet" href="css/welt.css?v=1">
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+} }
+</script>
+</head>
+<body class="welt">
+<canvas id="scene"></canvas>
+
+<div id="hud">
+  <div id="title">Pinnow · Weltkarte</div>
+  <div id="pos"></div>
+</div>
+
+<canvas id="minimap" width="200" height="200" title="Karte – Klick: dorthin"></canvas>
+
+<div id="toolbar">
+  <button id="btn-fly" title="Fliegen ein/aus (F)">🕊 Fliegen</button>
+  <button id="btn-pix" title="Pixelgröße (P)">▦ grob</button>
+  <button id="btn-home" title="Zu Am See 16 (H)">🏠</button>
+  <button id="btn-help" title="Hilfe">?</button>
+  <a class="btn" href="./" title="Zur Auswahl">☰</a>
+</div>
+
+<div id="flypad"><button id="btn-up">▲</button><button id="btn-fast">⏩</button><button id="btn-down">▼</button></div>
+
+<div id="place" class="panel hidden"><span id="place-name"></span> <a id="place-link" class="btn" href="#">Diorama öffnen (E)</a></div>
+
+<div id="start" class="panel">
+  <h1>Pinnow · Weltkarte</h1>
+  <p>14 × 14 km rund um den Pinnower See in grober Pixelgrafik. Gelände, Häuser und Bäume werden nur im Umkreis von 3 km geladen und wandern mit.</p>
+  <div id="loading">Lade Karte …</div>
+  <div id="help">
+    <p><b>Computer:</b> Klicken, dann mit der Maus umsehen. <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> gehen, <kbd>Shift</kbd> schnell, <kbd>F</kbd> fliegen (<kbd>Leertaste</kbd>/<kbd>C</kbd> hoch/runter), <kbd>P</kbd> Pixelgröße, <kbd>H</kbd> zu Am See 16, <kbd>Esc</kbd> Maus freigeben.</p>
+    <p><b>Handy/Tablet:</b> links ziehen = gehen, rechts ziehen = umsehen, ⏩ = schnell.</p>
+    <p>Orange Säulen markieren die beiden Dioramen.</p>
+  </div>
+  <button id="btn-start" disabled>Losgehen</button>
+  <p class="small"><a href="./">← Zur Auswahl</a></p>
+</div>
+
+<div id="joystick"><div id="stick"></div></div>
+<div id="attribution">Daten: © GeoBasis-DE/M-V 2026, <a href="https://www.geoportal-mv.de" target="_blank" rel="noopener">GeoPortal.MV</a> · 3D: three.js</div>
+
+<script type="module" src="js/welt.js?v=1"></script>
+</body>
+</html>
