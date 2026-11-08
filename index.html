@@ -2,51 +2,74 @@
 <html lang="de">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Pinnow Walk</title>
-<link rel="stylesheet" href="css/style.css">
-<script type="importmap">
-{ "imports": {
-  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
-} }
+<script>
+  // alte Links (?ort=16 / ?ort=89) führen weiter direkt ins Diorama
+  const o = new URLSearchParams(location.search).get('ort');
+  if (o) location.replace('diorama.html?ort=' + encodeURIComponent(o));
 </script>
+<style>
+  :root { --bg: #1d2a2f; --card: #26363c; --text: #f1f3f2; --muted: #b5bdbb; --accent: #ff9b3d; --line: rgba(255,255,255,.14); }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--text);
+    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; display: flex; flex-direction: column; }
+  main { width: min(880px, 100%); margin: 0 auto; padding: 32px 16px 24px; flex: 1; }
+  h1 { margin: 0 0 4px; font-size: 28px; }
+  .lead { margin: 0 0 24px; color: var(--muted); }
+  .grid { display: grid; grid-template-columns: 1.3fr 1fr; gap: 14px; }
+  .side { display: grid; gap: 14px; }
+  a.card { display: block; background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px;
+    color: inherit; text-decoration: none; transition: transform .12s, border-color .12s; }
+  a.card:hover { transform: translateY(-2px); border-color: var(--accent); }
+  .card h2 { margin: 10px 0 4px; font-size: 19px; }
+  .card p { margin: 0; color: var(--muted); font-size: 14px; }
+  .tag { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 99px; background: var(--accent); color: #222; font-weight: 600; }
+  .pix { width: 100%; aspect-ratio: 16 / 9; border-radius: 8px; image-rendering: pixelated; display: block; background: #3a5a3a; }
+  .card.main .pix { aspect-ratio: 4 / 3; }
+  .go { margin-top: 10px; color: var(--accent); font-weight: 600; font-size: 14px; }
+  footer { padding: 12px 16px; font-size: 12px; color: var(--muted); text-align: center; }
+  footer a { color: var(--muted); }
+  @media (max-width: 640px) { .grid { grid-template-columns: 1fr; } h1 { font-size: 23px; } main { padding-top: 22px; } }
+</style>
 </head>
 <body>
-<canvas id="scene"></canvas>
-
-<div id="hud">
-  <div id="title">Pinnow</div>
-  <div id="pos"></div>
-</div>
-
-<canvas id="minimap" width="200" height="200" title="Grundstück von oben – Klick: dorthin gehen"></canvas>
-
-<div id="toolbar">
-  <button id="btn-overview" title="Übersicht von oben (U)">⬚ Übersicht</button>
-  <button id="btn-fly" title="Fliegen ein/aus (F)">🕊 Fliegen</button>
-  <button id="btn-home" title="Zur Terrasse (H)">🏠</button>
-  <button id="btn-help" title="Hilfe">?</button>
-</div>
-
-<div id="start" class="panel">
-  <div id="sites">
-    <button data-ort="16">Am See 16</button>
-    <button data-ort="89">Flurstück 89</button>
+<main>
+  <h1>Pinnow Walk</h1>
+  <p class="lead">Begehbare 3D-Modelle rund um Pinnow und den Pinnower See, gebaut aus amtlichen Messdaten.</p>
+  <div class="grid">
+    <a class="card main" href="welt.html">
+      <canvas class="pix" id="pv" width="64" height="48"></canvas>
+      <h2>Weltkarte <span class="tag">neu</span></h2>
+      <p>14 × 14 km Landschaft in grober Pixelgrafik: Gelände, alle Häuser, Wald und Seen. Geladen wird nur, was im Umkreis von 3 km liegt.</p>
+      <div class="go">Losgehen →</div>
+    </a>
+    <div class="side">
+      <a class="card" href="diorama.html?ort=16">
+        <h2>Am See 16</h2>
+        <p>Diorama des Grundstücks (Flurstücke 111/90 und 111/91) mit Haus, Steg und Bewuchs.</p>
+        <div class="go">Öffnen →</div>
+      </a>
+      <a class="card" href="diorama.html?ort=89">
+        <h2>Flurstück 89</h2>
+        <p>Diorama des Flurstücks 111/89 schräg gegenüber.</p>
+        <div class="go">Öffnen →</div>
+      </a>
+    </div>
   </div>
-  <h1 id="site-title">Pinnow</h1>
-  <p>Begehbares Modell des Grundstücks (<span id="site-sub"></span>), gebaut aus amtlichen Messdaten und den eigenen Fotos.</p>
-  <div id="loading">Lade Daten …</div>
-  <div id="help">
-    <p><b>Computer:</b> Klicken, dann mit der Maus umsehen. <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> gehen, <kbd>Shift</kbd> rennen, <kbd>F</kbd> fliegen (<kbd>Leertaste</kbd>/<kbd>C</kbd> hoch/runter), <kbd>H</kbd> zur Terrasse, <kbd>U</kbd> Übersicht, <kbd>Esc</kbd> Maus freigeben.</p>
-    <p><b>Handy/Tablet:</b> links ziehen = gehen, rechts ziehen = umsehen.</p>
-  </div>
-  <button id="btn-start" disabled>Losgehen</button>
-</div>
-
-<div id="joystick"><div id="stick"></div></div>
-<div id="attribution">Daten: © GeoBasis-DE/M-V 2026, <a href="https://www.geoportal-mv.de" target="_blank" rel="noopener">GeoPortal.MV</a> · 3D: three.js</div>
-
-<script type="module" src="js/main.js?v=9"></script>
+</main>
+<footer>Daten: © GeoBasis-DE/M-V 2026, <a href="https://www.geoportal-mv.de" target="_blank" rel="noopener">GeoPortal.MV</a> · 3D: three.js</footer>
+<script>
+  // Vorschau: Ausschnitt der Pixelkarte rund um Am See 16
+  const img = new Image();
+  img.onload = () => {
+    const c = document.getElementById('pv').getContext('2d');
+    c.imageSmoothingEnabled = false;
+    // Übersicht: 14 km auf 700 px (20 m je Pixel); Am See 16 liegt bei Pixel (340, 358)
+    c.drawImage(img, 340 - 64, 358 - 48, 128, 96, 0, 0, 64, 48);
+    c.fillStyle = '#ff9b3d'; c.fillRect(31, 23, 2, 2);
+  };
+  img.src = 'data/welt/overview.png';
+</script>
 </body>
 </html>

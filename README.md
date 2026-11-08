@@ -1,10 +1,18 @@
-# Pinnow Walk – Am See 16 und Flurstück 89
+# Pinnow Walk – Weltkarte, Am See 16 und Flurstück 89
+
+**Aufruf:** https://bunwichtig.github.io/pinnowwalk/ – die Startseite bietet die Auswahl:
+
+- **Weltkarte** (`welt.html`): 14 × 14 km rund um den Pinnower See als grobe Pixelgrafik. Gelände (DGM1, 10-m-Raster),
+  alle LoD2-Gebäude, höchstens ein Baum je 25 × 25 m (aus dem nDOM), Bodenfarben als 4-m-Pixel (aus nDOM, DGM und den
+  Farben des Luftbilds abgeleitet; das Luftbild selbst wird nicht gezeigt). Die Karte liegt in 1-km-Kacheln unter
+  `data/welt/`; geladen wird nur der Umkreis von 3 km, Bäume bis 1,5 km. Erzeugt mit `python3 tools/build_world.py`.
+- **Dioramen** (`diorama.html?ort=16` bzw. `?ort=89`), siehe unten.
+
+## Dioramen
 
 Begehbares Modell des Grundstücks **Am See 16, 19065 Pinnow (OT Godern)**, Flurstücke 111/90 und 111/91,
 als schlichtes Diorama ohne Texturen. Alle Formen kommen aus amtlichen Messdaten oder aus den eigenen Fotos;
 nichts ist dazuerfunden.
-
-**Aufruf:** https://bunwichtig.github.io/pinnowwalk/
 
 ## Was woher kommt
 | Teil | Quelle |
