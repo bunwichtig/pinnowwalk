@@ -20,11 +20,13 @@ import urllib.request
 import zipfile
 
 import mapbox_earcut as earcut
+from PIL import Image
+from pyproj import Transformer
 import numpy as np
 import tifffile
 from lxml import etree
 from scipy.spatial import Delaunay
-from shapely.geometry import LineString, MultiPoint, Point, Polygon
+from shapely.geometry import LineString, MultiPoint, MultiPolygon, Point, Polygon
 from shapely.ops import unary_union
 
 E0, N0 = 270780.0, 5944840.0          # Ursprung des lokalen Systems (UTM 33N, EPSG:25833)
@@ -46,13 +48,40 @@ SITES = {
                   "boat": (270765.5, 5944858.0, 1.57), "bed": (270762.8, 5944863.7)},
     "am-see-89": {"title": "Flurstück 89", "sub": "Flurstück 111/89, schräg gegenüber", "origin": (270823.0, 5944872.0),
                   "parcels": {"111/89": (270823.3, 5944872.5)}, "jetty": None, "stairs": None},
+    # Dorfstraße 2 (Pinnow-Dorf, Flurstück 56/4) mit allem im Umkreis von 100 m. Straßen aus OpenStreetMap,
+    # Farben der Häuser und alles Weitere (Zaun, Laternen, Wartehäuschen, Terrasse, Wäschespinne) nach den Fotos.
+    "dorfstrasse-2": {
+        "title": "Dorfstraße 2", "sub": "Flurstück 56/4 und Umgebung, 100 m", "origin": (271563.0, 5944819.0),
+        "parcels": {"56/4": (271563.3, 5944819.2)}, "jetty": None, "stairs": None, "radius": 100.0,
+        # Hausteile nach den Fotos: Mitte und Nordostteil Backstein, Südwestteil verputzt mit Holzgiebel und Balkon,
+        # davor ein niedriger Holzanbau mit bemoostem Dach; alle Hauptdächer rote Ziegel
+        "colors": {"DEMVAL7600bsCoff": ("brick", "tile"), "DEMVAL7600bsCofr": ("brick", "tile"),
+                   "DEMVAL7600bsCofa": ("plaster", "tile"), "DEMVAL7600bsCHwc": ("timber", "moss")},
+        # Holzlattenzaun an der Straße zwischen Haus und Einmündung (Fotos von der Straße)
+        "fences": [[(271548.3, 5944794.9), (271550.3, 5944797.4), (271556.0, 5944802.6)]],
+        # Doppelkopf-Laternen: Gehwegecke an der Einmündung, Gehweg vor dem Haus (Fotos); OSM-Laterne im Osten
+        "lamps": [(271556.0, 5944782.5), (271574.5, 5944815.5), (271642.0, 5944832.9)],
+        # Wartehäuschen (grün, Glas) und Haltestellenschild laut OSM, Aussehen nach den Fotos
+        # (das zweite Wartehäuschen aus OSM an der Einmündung ist auf den Fotos nicht zu sehen und fehlt deshalb)
+        "shelters": [(271585.5, 5944820.6)],
+        "busstops": [(271566.9, 5944805.9), (271583.8, 5944823.3)],
+        # Garten nach den Fotos: Terrasse mit großen hellen Platten vor dem Backsteingiebel zum Garten,
+        # zwei Holz-T-Pfosten mit Wäscheleinen etwa 9 m davor, etwas nach Nordost versetzt;
+        # Holzbalkon im verputzten Giebel zur Einmündung (Südwest)
+        "terrace": "DEMVAL7600bsCoff", "clothesline": 9.0, "balcony": "DEMVAL7600bsCofa",
+    },
 }
+OSM_W = {"primary": 7, "secondary": 7, "tertiary": 6.5, "unclassified": 6, "residential": 6, "living_street": 5,
+         "service": 3.5, "track": 3, "footway": 2, "path": 1.5, "cycleway": 2, "pedestrian": 3, "steps": 1.5}
 PARCELS, JETTY, STAIRS, SITE = {}, None, None, {}
 
 URLS = {
     "dgm": "https://www.geodaten-mv.de/dienste/dgm_download?index=4&dataset=ca268792-s2q1-4a39-b34c-9ec5bf9a4469&file=dgm1_{t}_gtiff.tif",
     "ndom": "https://www.geodaten-mv.de/dienste/ndom_download?index=0&dataset=66b85dc1-404c-4fab-b652-d2501962912c&file=ndom_{t}_gtiff.tif",
     "lod2": "https://www.geodaten-mv.de/dienste/gebaeude_download?index=0&dataset=8397b554-5cb9-4274-8be8-c20490d9a6e8&file=lod2_{t}_gml.zip",
+    "osm": "https://api.openstreetmap.org/api/0.6/map?bbox={w},{s},{e},{n}",
+    "dop": "https://www.geodaten-mv.de/dienste/adv_dop?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=mv_dop&STYLES="
+           "&CRS=EPSG:25833&BBOX={x0},{y0},{x1},{y1}&WIDTH={w}&HEIGHT={w}&FORMAT=image/jpeg",
     "alkis": "https://www.geodaten-mv.de/dienste/alkis_wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetFeatureInfo"
              "&LAYERS=adv_alkis_flurstuecke&QUERY_LAYERS=adv_alkis_flurstuecke&STYLES=&CRS=EPSG:25833"
              "&BBOX={x0},{y0},{x1},{y1}&WIDTH=3&HEIGHT=3&I=1&J=1&INFO_FORMAT=text/xml;subtype=gml/3.2.1&FEATURE_COUNT=1",
@@ -98,10 +127,10 @@ def sampler(raster):
     return f
 
 
-def surface(poly, h, step=1.0):
+def surface(poly, h, step=1.0, edge_step=0.75):
     """Dreiecksnetz des Geländes genau innerhalb der Grundstücksgrenze und die Seitenwände des Dioramas."""
     ring = LineString(poly.exterior.coords)
-    edge = [ring.interpolate(d) for d in np.arange(0, ring.length, 0.75)]
+    edge = [ring.interpolate(d) for d in np.arange(0, ring.length, edge_step)]
     x0, y0, x1, y1 = poly.bounds
     shrunk = poly.buffer(-0.4)
     inner = [Point(x, y) for x in np.arange(x0, x1, step) for y in np.arange(y0, y1, step)]
@@ -161,9 +190,60 @@ def buildings(gml, poly):
                         tri += [x, round(float(z - BASE), 2), zz]
             parts[key] = tri
         foot = [list(loc(e, n)) for e, n, _ in g[0]]
-        out.append({"roof": parts["roof"], "wall": parts["wall"], "foot": foot,
-                    "ground": round(float(np.vstack(g)[:, 2].min() - BASE), 2)})
+        out.append({"id": b.get("{http://www.opengis.net/gml}id"), "roof": parts["roof"], "wall": parts["wall"], "foot": foot,
+                    "ground": round(float(np.vstack(g)[:, 2].min() - BASE), 2), "_g": g[0][:, :2]})
     return out
+
+
+def drape(poly, h, lift, step=1.5):
+    """Flaches Band (Straße, Gehweg) als Dreiecksnetz knapp über dem Gelände, auch mit Löchern."""
+    polys = list(poly.geoms) if isinstance(poly, MultiPolygon) else [poly]
+    verts, tris = [], []
+    for pg in polys:
+        if pg.area < 0.5:
+            continue
+        pts = []
+        for ring in [pg.exterior, *pg.interiors]:
+            ls = LineString(ring.coords)
+            pts += [ls.interpolate(d) for d in np.arange(0, ls.length, 1.0)]
+        x0, y0, x1, y1 = pg.bounds
+        sh = pg.buffer(-0.3)
+        pts += [Point(x, y) for x in np.arange(x0, x1, step) for y in np.arange(y0, y1, step) if sh.contains(Point(x, y))]
+        xy = np.array([[p.x, p.y] for p in pts])
+        if len(xy) < 3:
+            continue
+        tri = Delaunay(xy)
+        test = pg.buffer(0.02)
+        off = len(verts)
+        z = h(xy[:, 0], xy[:, 1])
+        for (e, n), zz in zip(xy, z):
+            x, zl = loc(e, n)
+            verts.append([x, round(float(zz - BASE + lift), 2), zl])
+        tris += [[int(k) + off for k in t] for t in tri.simplices if test.contains(Point(xy[t].mean(0)))]
+    return {"verts": verts, "tris": tris}
+
+
+def roof_colors(bld, dop, box):
+    """Dachfarbe je Gebäude aus dem Luftbild, auf drei Töne vereinfacht (das Luftbild selbst wird nicht gezeigt)."""
+    x0, y0, x1, y1 = box
+    k = dop.shape[1] / (x1 - x0)
+    for b in bld:
+        pg = Polygon(b["_g"]).buffer(-0.6)
+        if pg.is_empty:
+            pg = Polygon(b["_g"])
+        bx0, by0, bx1, by1 = pg.bounds
+        vals = []
+        for e in np.arange(bx0, bx1, 0.4):
+            for n in np.arange(by0, by1, 0.4):
+                if pg.contains(Point(e, n)):
+                    c, r = int((e - x0) * k), int((y1 - n) * k)
+                    if 0 <= r < dop.shape[0] and 0 <= c < dop.shape[1]:
+                        vals.append(dop[r, c, :3])
+        if not vals:
+            b["roofTone"] = "grey"
+            continue
+        r, g, bl = np.median(np.array(vals, float), 0)
+        b["roofTone"] = "tile" if r >= g + 15 and r >= bl + 15 else ("dark" if r + g + bl < 300 else "grey")
 
 
 def vegetation(ndom, poly, foot_polys, h):
@@ -189,6 +269,148 @@ def vegetation(ndom, poly, foot_polys, h):
         if v >= 6 and v >= max(nb):
             trunks.append([x, z, round(g - BASE - 0.3, 2), round(g + v - thick - BASE + 0.5, 2), round(0.12 + v * 0.01, 2)])
     return blocks, trunks
+
+
+def vegetation_coarse(ndom, area, parcel, foot_polys, roads, h):
+    """Für den 100-m-Umkreis: im Flurstück 1-m-Blöcke wie bei den anderen Dioramen, außerhalb 2-m-Blöcke
+    (höchster Wert der vier nDOM-Pixel), damit es auch auf dem Handy flüssig bleibt. Autos auf der Straße fallen weg."""
+    houses = unary_union([Polygon(f).buffer(1.0) for f in foot_polys]) if foot_polys else Polygon()
+    near_parcel = parcel.buffer(0.7)
+    x0, y0, x1, y1 = [int(v) for v in area.bounds]
+    blocks, cells = [], {}
+    for size in (1, 2):
+        for e in range(x0 - x0 % size, x1 + 1, size):
+            for n in range(y0 - y0 % size, y1 + 1, size):
+                ce, cn = e + size / 2, n + size / 2
+                pt = Point(ce, cn)
+                inside = near_parcel.contains(pt) if size == 2 else parcel.contains(pt)
+                if (size == 1) != inside or not area.contains(pt) or houses.contains(Point(ce - E0, N0 - cn)):
+                    continue
+                win = ndom[TILE_N - n - size:TILE_N - n, e - TILE_E:e - TILE_E + size]
+                win = win[np.isfinite(win) & (win < 60)]
+                if not win.size:
+                    continue
+                v = float(win.max())
+                if v < 1.8 or (v < 4.0 and roads.contains(pt)):
+                    continue
+                cells[(e, n, size)] = (v, float(h(ce, cn)))
+    trunks = []
+    for (e, n, size), (v, g) in cells.items():
+        thick = float(np.clip(v * 0.35, 0.8, 4.0))
+        x, z = loc(e + size / 2, n + size / 2)
+        blocks.append([x, z, round(g + v - thick - BASE, 2), round(thick, 2), round(v, 1), size])
+        nb = [cells.get((e + dx * size, n + dy * size, size), (0, 0))[0] for dx in range(-2, 3) for dy in range(-2, 3)]
+        if v >= 6 and v >= max(nb):
+            trunks.append([x, z, round(g - BASE - 0.3, 2), round(g + v - thick - BASE + 0.5, 2), round(0.12 + v * 0.01, 2)])
+    return blocks, trunks
+
+
+def osm_roads(cache, area):
+    """Straßen und Wege aus OpenStreetMap als Flächen (Breite je Wegart)."""
+    t = Transformer.from_crs(25833, 4326, always_xy=True)
+    x0, y0, x1, y1 = area.buffer(30).bounds
+    w, s_ = t.transform(x0, y0)
+    e, n = t.transform(x1, y1)
+    path = fetch(URLS["osm"].format(w=round(w, 5), s=round(s_, 5), e=round(e, 5), n=round(n, 5)),
+                 os.path.join(cache, "osm_%d_%d.xml" % (E0, N0)))
+    back = Transformer.from_crs(4326, 25833, always_xy=True)
+    root = etree.parse(path)
+    nodes = {nd.get("id"): back.transform(float(nd.get("lon")), float(nd.get("lat"))) for nd in root.iter("node")}
+    road, foot, lines = [], [], []
+    for way in root.iter("way"):
+        tags = {x.get("k"): x.get("v") for x in way.iter("tag")}
+        kind = tags.get("highway")
+        if kind not in OSM_W or tags.get("area") == "yes":
+            continue
+        ls = LineString([nodes[nd.get("ref")] for nd in way.iter("nd") if nd.get("ref") in nodes])
+        (foot if kind in ("footway", "path", "cycleway", "steps") else road).append(ls.buffer(OSM_W[kind] / 2, cap_style=2 if kind in ("footway", "path") else 1))
+        if kind not in ("footway", "path", "cycleway", "steps", "service"):
+            lines.append(ls)
+    clip = area.buffer(-0.3)
+    road = unary_union(road).intersection(clip) if road else Polygon()
+    foot = unary_union(foot).difference(road).intersection(clip) if foot else Polygon()
+    return road, foot, lines
+
+
+def street_objects(h, bld, parcel, road, lines):
+    """Zaun, Laternen, Wartehäuschen, Haltestellenschilder, Terrasse und Wäscheleine nach den Fotos (Lage geschätzt)."""
+    hz = lambda e, n: round(float(h(e, n) - BASE), 2)
+    pt = lambda e, n: [*loc(e, n), hz(e, n)]
+    objs = {}
+    houses = unary_union([Polygon(b["_g"]) for b in bld]).buffer(0.3)
+    fences = []
+    for line in SITE.get("fences", []):
+        rest = LineString(line).difference(houses)
+        for seg in (rest.geoms if hasattr(rest, "geoms") else [rest]):
+            if seg.length < 1:
+                continue
+            dense = [seg.interpolate(d) for d in np.arange(0, seg.length, 2.0)] + [Point(seg.coords[-1])]
+            fences.append([pt(p.x, p.y) for p in dense])
+    objs["zaun"] = fences
+    objs["laternen"] = [pt(e, n) for e, n in SITE.get("lamps", [])]
+
+    def road_yaw(e, n):
+        # Richtung der nächsten Straße, damit Wartehäuschen parallel dazu stehen
+        p = Point(e, n)
+        ln = min(lines, key=lambda l: l.distance(p))
+        d = ln.project(p)
+        a, b = ln.interpolate(max(0, d - 2)), ln.interpolate(min(ln.length, d + 2))
+        side = ln.interpolate(d)
+        # lokale Achsen: x = Ost, z = Süd; Rückwand zeigt von der Straße weg
+        nx, nz = e - side.x, -(n - side.y)
+        return round(float(np.arctan2(b.x - a.x, -(b.y - a.y))), 3), round(float(np.arctan2(nx, nz)), 3)
+    objs["haeuschen"] = [[*pt(e, n), *road_yaw(e, n)] for e, n in SITE.get("shelters", [])]
+    objs["haltestellen"] = [pt(e, n) for e, n in SITE.get("busstops", [])]
+
+    # Terrasse vor der Gartenseite des Haupthauses: die Wand, die am weitesten in den Garten (Nordwest) zeigt
+    def facing(bid, want, gable=False):
+        """Mitte, Außennormale, Tangente und Länge der Wand eines Gebäudes, die am ehesten in Richtung `want` zeigt;
+        mit gable=True nur Giebelwände (quer zum First)."""
+        b = next((b for b in bld if b["id"] == bid), None)
+        if b is None:
+            return None
+        g = b["_g"]
+        c = g.mean(0)
+        ridge = None
+        if gable:
+            r = np.array(b["roof"]).reshape(-1, 3)
+            top = r[r[:, 1] > r[:, 1].max() - 0.15]
+            d = np.array([top[:, 0], -top[:, 2]]).T          # zurück nach Ost/Nord
+            d = d - d.mean(0)
+            ridge = np.linalg.svd(d)[2][0]
+        best = None
+        for p0, p1 in zip(g, np.roll(g, -1, axis=0)):
+            t = p1 - p0
+            L = float(np.hypot(*t))
+            if L < 3:
+                continue
+            nrm = np.array([t[1], -t[0]]) / L
+            if np.dot(nrm, (p0 + p1) / 2 - c) < 0:
+                nrm = -nrm
+            if ridge is not None and abs(np.dot(nrm, ridge)) < 0.8:
+                continue
+            if best is None or np.dot(nrm, want) > best[0]:
+                best = (np.dot(nrm, want), (p0 + p1) / 2, nrm, t / L, L, b)
+        return best[1:]
+
+    side = facing(SITE.get("balcony"), [-0.7071, -0.7071], gable=True)   # Giebel zur Straßenecke
+    if side:
+        mid, nrm, tan, L, b = side
+        bc = mid + nrm * 0.45
+        objs["balkon"] = {"x": loc(*bc)[0], "z": loc(*bc)[1], "y": round(b["ground"] + 3.0, 2), "w": round(min(5.5, L - 1.2), 2),
+                          "d": 0.9, "yaw": round(float(np.arctan2(nrm[0], -nrm[1])), 3)}
+    main = facing(SITE.get("terrace"), [-0.7071, 0.7071])           # Gartenseite nach Nordwest
+    if main is not None:
+        mid, nrm, tan, L, _ = main
+        if np.dot(tan, [0.7071, 0.7071]) < 0:                # Tangente zeigt nach Nordost
+            tan = -tan
+        tc = mid + nrm * 1.9
+        lx, lz = loc(*tc)
+        yaw = round(float(np.arctan2(nrm[0], -nrm[1])), 3)
+        objs["platten"] = {"x": lx, "z": lz, "y": hz(*tc), "w": round(min(5.0, L - 0.5), 2), "d": 3.6, "yaw": yaw}
+        cl = mid + nrm * SITE.get("clothesline", 9.0) + tan * 2.0
+        objs["waesche"] = {"a": pt(*(cl - tan * 2.3)), "b": pt(*(cl + tan * 2.3)), "h": 2.0}
+    return objs
 
 
 def photo_objects(h, bld):
@@ -233,6 +455,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--cache", default=os.path.join(os.path.dirname(__file__), "cache"))
     ap.add_argument("--out", default=os.path.join(os.path.dirname(__file__), "..", "data"))
+    ap.add_argument("--only", help="nur dieses Diorama bauen, z. B. dorfstrasse-2")
     a = ap.parse_args()
     os.makedirs(a.cache, exist_ok=True)
     os.makedirs(a.out, exist_ok=True)
@@ -243,6 +466,8 @@ def main():
         gml = z.read([nm for nm in z.namelist() if nm.lower().endswith(".gml")][0])
     h = sampler(dgm)
     for key, site in SITES.items():
+        if a.only and key != a.only:
+            continue
         build_site(key, site, a, h, ndom, gml)
 
 
@@ -263,10 +488,37 @@ def build_site(key, site, a, h, ndom, gml):
         if water.geom_type != "Polygon":
             water = max(water.geoms, key=lambda g: g.area)
 
-    ground = surface(poly, h)
-    bld = buildings(gml, parcel)
-    blocks, trunks = vegetation(ndom, parcel, [b["foot"] for b in bld], h)
-    objs = photo_objects(h, bld)
+    extra = {}
+    if site.get("radius"):
+        # Umkreis statt Grundstück: alles im Kreis um das Haus, das Flurstück wird nur markiert
+        poly = Point(E0, N0).buffer(site["radius"], 48)
+        ground = surface(poly, h, step=2.0, edge_step=2.0)
+        bld = buildings(gml, poly)
+        r = site["radius"] + 2
+        box = (E0 - r, N0 - r, E0 + r, N0 + r)
+        px = int(2 * r / 0.25)
+        dop = np.asarray(Image.open(fetch(URLS["dop"].format(x0=box[0], y0=box[1], x1=box[2], y1=box[3], w=px),
+                                          os.path.join(a.cache, "dop_%d_%d.jpg" % (E0, N0)))).convert("RGB"))
+        roof_colors(bld, dop, box)
+        for b in bld:
+            b["main"] = parcel.contains(Point(b["_g"].mean(0)))
+            if b["id"] in site.get("colors", {}):
+                b["wallTone"], b["roofTone"] = site["colors"][b["id"]]
+        road, foot, lines = osm_roads(a.cache, poly)
+        side = road.buffer(2.6).difference(road).intersection(parcel.buffer(5)).difference(
+            unary_union([Polygon(b["_g"]) for b in bld])).intersection(poly.buffer(-0.3))
+        foot = unary_union([foot, side])
+        blocks, trunks = vegetation_coarse(ndom, poly, parcel, [b["foot"] for b in bld], road, h)
+        objs = street_objects(h, bld, parcel, road, lines)
+        extra = {"roads": drape(road, h, 0.06), "walks": drape(foot, h, 0.1), "radius": site["radius"],
+                 "attributionOsm": "Straßen © OpenStreetMap-Mitwirkende (ODbL)"}
+    else:
+        ground = surface(poly, h)
+        bld = buildings(gml, parcel)
+        blocks, trunks = vegetation(ndom, parcel, [b["foot"] for b in bld], h)
+        objs = photo_objects(h, bld)
+    for b in bld:
+        del b["_g"]
 
     model = {
         "title": site["title"], "subtitle": site["sub"],
@@ -275,7 +527,7 @@ def build_site(key, site, a, h, ndom, gml):
         "area": [list(loc(e, n)) for e, n in poly.exterior.coords],
         "ground": ground, "buildings": bld, "vegetation": blocks, "trunks": trunks,
         "objects": objs, "waterArea": [list(loc(e, n)) for e, n in water.exterior.coords] if water else [],
-        "attribution": "© GeoBasis-DE/M-V 2026 (ALKIS, DGM1, nDOM, LoD2)",
+        "attribution": "© GeoBasis-DE/M-V 2026 (ALKIS, DGM1, nDOM, LoD2)", **extra,
     }
     with open(os.path.join(a.out, key + ".json"), "w") as f:
         json.dump(model, f, separators=(",", ":"), ensure_ascii=False)

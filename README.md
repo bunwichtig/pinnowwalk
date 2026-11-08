@@ -1,4 +1,4 @@
-# Pinnow Walk – Weltkarte, Am See 16 und Flurstück 89
+# Pinnow Walk – Weltkarte, Am See 16, Flurstück 89 und Dorfstraße 2
 
 **Aufruf:** https://bunwichtig.github.io/pinnowwalk/ – die Startseite bietet die Auswahl:
 
@@ -6,7 +6,14 @@
   alle LoD2-Gebäude, höchstens ein Baum je 25 × 25 m (aus dem nDOM), Bodenfarben als 4-m-Pixel (aus nDOM, DGM und den
   Farben des Luftbilds abgeleitet; das Luftbild selbst wird nicht gezeigt). Die Karte liegt in 1-km-Kacheln unter
   `data/welt/`; geladen wird nur der Umkreis von 3 km, Bäume bis 1,5 km. Erzeugt mit `python3 tools/build_world.py`.
-- **Dioramen** (`diorama.html?ort=16` bzw. `?ort=89`), siehe unten.
+- **Dioramen** (`diorama.html?ort=16`, `?ort=89` bzw. `?ort=dorf2`), siehe unten.
+
+### Dorfstraße 2 (`?ort=dorf2`)
+Haus Dorfstraße 2 in Pinnow-Dorf (Flurstück 56/4, rot umrandet) mit allem im Umkreis von 100 m: Gelände (DGM1),
+alle LoD2-Häuser, Bewuchs aus dem nDOM (im Flurstück 1-m-, außerhalb 2-m-Blöcke), Straßen und Wege aus
+OpenStreetMap (© OpenStreetMap-Mitwirkende, ODbL). Dachfarben vereinfacht aus dem Luftbild (das Luftbild selbst wird
+nicht gezeigt). Nach den eigenen Fotos: Backstein und Putz am Haus, Holzanbau, Holzbalkon im Putzgiebel,
+Lattenzaun, Doppelkopf-Laternen, grünes Wartehäuschen, Haltestellenschilder, Terrasse und Wäscheleine im Garten.
 
 ## Dioramen
 
