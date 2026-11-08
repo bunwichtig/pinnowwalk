@@ -241,8 +241,8 @@ def read_buildings(gml, buildings, fd, se, sn):
                     res = triangulate(poly)
                 except Exception:
                     res = None
-                if res is not None and len(res[0]):
-                    lst.append((res[0].reshape(-1, 3).astype(np.float64), ci))
+                if res is not None and len(res):
+                    lst.append((np.asarray(res).reshape(-1, 3).astype(np.float64), ci))
 
 
 def classify(dop, veg, flat):

@@ -9,7 +9,7 @@ const PIX = [{ name: 'grob', h: 200 }, { name: 'mittel', h: 320 }, { name: 'fein
 const $ = (id) => document.getElementById(id);
 const isTouch = matchMedia('(pointer: coarse)').matches;
 if (isTouch) document.body.classList.add('touch');
-const V = '?v=1';
+const V = '?v=2';
 
 // ---------- Renderer, Szene ----------
 const renderer = new THREE.WebGLRenderer({ canvas: $('scene'), antialias: false, powerPreference: 'high-performance' });
