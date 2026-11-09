@@ -16,10 +16,14 @@ const COLORS = {
   leaf: [0x9fb98a, 0x8aab76, 0x7a9c68, 0x6c8e5c], trunk: 0x8a7462, wood: 0xb79a78, concrete: 0xc8c6c0,
   boat: 0xffffff, bed: 0x8c6f55, stone: 0xb0aaa0, roofSheet: 0xa9b0b5,
   // Dorfstraße 2: Farben nach den Fotos bzw. Dachfarben aus dem Luftbild (vereinfacht)
-  walls: { brick: 0xb8705a, plaster: 0xe3d8c2, timber: 0x6f5c4b },
+  walls: { brick: 0xc27a60, plaster: 0xe3d8c2, timber: 0x6f5c4b },
   roofs: { grey: 0x8a8f96, tile: 0xbd6a4c, dark: 0x5d6166, moss: 0x7f7b5e },
   road: 0xaaa69e, walk: 0xbf9282, fence: 0x6b5442, metal: 0x9aa0a4, shelter: 0x3f8f7a, glass: 0xcfe3e6,
   sign: 0xd8c84a, parcel: 0xd0453a,
+  // schönere Darstellung (Dorfstraße 2): Bodenarten, Hauswände der Nachbarn, Laub
+  soil: [0x7ea35b, 0x9db06c, 0xb19a72, 0xbdb7aa], earth: 0x5c4a3b, edge: 0x3b342d,
+  neighbours: [0xf3ede2, 0xe9e2d4, 0xf6f2ea, 0xe2dccf, 0xede3cf, 0xdfe3e2],
+  crowns: [0x5f8f45, 0x6c9a4c, 0x4f7f3e, 0x77a352, 0x58884a], bush: [0x4f7a3c, 0x5d8744, 0x46703a],
 };
 
 // ---------- Renderer, Szene, Licht ----------
@@ -35,7 +39,8 @@ scene.background = new THREE.Color(0xeef0f2);
 const camera = new THREE.PerspectiveCamera(65, innerWidth / innerHeight, 0.1, 500);
 camera.rotation.order = 'YXZ';
 
-scene.add(new THREE.HemisphereLight(0xffffff, 0xb8b2a6, 1.9));
+const hemi = new THREE.HemisphereLight(0xffffff, 0xb8b2a6, 1.9);
+scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xffffff, 2.2);
 sun.position.set(-30, 60, 40);
 sun.castShadow = true;
@@ -60,8 +65,34 @@ document.querySelectorAll('#sites button').forEach((b) => {
   b.onclick = () => { if (b.dataset.ort !== SITE) location.search = '?ort=' + b.dataset.ort; };
 });
 
+// Himmel mit Verlauf, Dunst, wärmeres Sonnenlicht (nur für die große, neue Darstellung)
+let skyMesh = null;
+function setupLook() {
+  if (!M.radius) return;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.05;
+  const top = new THREE.Color(0x7fb2e5), horizon = new THREE.Color(0xe6eef3);
+  const sky = new THREE.SphereGeometry(600, 24, 12);
+  const col = [];
+  const p = sky.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const t = THREE.MathUtils.clamp(p.getY(i) / 500, 0, 1) ** 0.6;
+    const c = horizon.clone().lerp(top, t);
+    col.push(c.r, c.g, c.b);
+  }
+  sky.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  skyMesh = new THREE.Mesh(sky, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false }));
+  skyMesh.renderOrder = -1;
+  scene.add(skyMesh);
+  scene.background = horizon;
+  scene.fog = new THREE.Fog(horizon, 180, 700);
+  hemi.color.set(0xd6e6ff); hemi.groundColor.set(0x6f7a52); hemi.intensity = 1.35;
+  sun.color.set(0xfff0d8); sun.intensity = 2.9;
+}
+
 async function load() {
   M = await (await fetch(`data/${FILES[SITE]}.json`, { cache: 'no-cache' })).json();
+  setupLook();
   const name = 'Pinnow · ' + M.title;
   $('title').textContent = $('site-title').textContent = document.title = name;
   $('site-sub').textContent = M.subtitle;
@@ -101,7 +132,19 @@ function buildGround() {
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.computeVertexNormals();
-  add(new THREE.Mesh(g, mat(COLORS.ground, { side: THREE.DoubleSide })));
+  if (M.ground.cls) {
+    // Bodenart je Punkt (Rasen, Wiese, Erde, Pflaster) mit leichtem Rauschen, weich verlaufend
+    const col = [], c = new THREE.Color();
+    for (const t of tris) for (const k of t) {
+      c.setHex(COLORS.soil[M.ground.cls[k]]);
+      const n = (Math.sin(verts[k][0] * 12.9898 + verts[k][2] * 78.233) * 43758.5453) % 1;
+      c.offsetHSL(0, 0, n * 0.03);
+      col.push(c.r, c.g, c.b);
+    }
+    g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    const ground = add(new THREE.Mesh(g, new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide })));
+    ground.castShadow = false;
+  } else add(new THREE.Mesh(g, mat(COLORS.ground, { side: THREE.DoubleSide })));
   for (const t of tris) terrainTris.push(t.map((k) => verts[k]));
   indexTerrain();
 
@@ -114,10 +157,10 @@ function buildGround() {
   const wg = new THREE.BufferGeometry();
   wg.setAttribute('position', new THREE.Float32BufferAttribute(w, 3));
   wg.computeVertexNormals();
-  add(new THREE.Mesh(wg, mat(COLORS.plinth, { side: THREE.DoubleSide })));
+  add(new THREE.Mesh(wg, mat(M.radius ? COLORS.earth : COLORS.plinth, { side: THREE.DoubleSide })));
   // Bodenplatte
   const shape = new THREE.Shape(M.area.map(([x, z]) => new THREE.Vector2(x, -z)));
-  const base = new THREE.Mesh(new THREE.ShapeGeometry(shape).rotateX(-Math.PI / 2), mat(COLORS.plinth, { side: THREE.DoubleSide }));
+  const base = new THREE.Mesh(new THREE.ShapeGeometry(shape).rotateX(-Math.PI / 2), mat(M.radius ? COLORS.earth : COLORS.plinth, { side: THREE.DoubleSide }));
   base.position.y = bottom;
   scene.add(base);
 }
@@ -137,8 +180,11 @@ function buildWater() {
 function buildHouses() {
   const buckets = new Map();
   const put = (color, arr) => { if (!buckets.has(color)) buckets.set(color, []); buckets.get(color).push(...arr); };
+  let hash = 0;
   for (const b of M.buildings) {
-    put(b.wallTone ? COLORS.walls[b.wallTone] : COLORS.wall, b.wall);
+    hash = (hash * 31 + b.foot.length + Math.round(b.foot[0][0] * 7)) >>> 0;
+    const nb = M.radius ? COLORS.neighbours[hash % COLORS.neighbours.length] : COLORS.wall;
+    put(b.wallTone ? COLORS.walls[b.wallTone] : nb, b.wall);
     put(b.roofTone && M.radius ? COLORS.roofs[b.roofTone] : COLORS.roof, b.roof);
     solids.push(b.foot);
   }
@@ -147,11 +193,54 @@ function buildHouses() {
     g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     g.computeVertexNormals();
     add(new THREE.Mesh(g, mat(color, { side: THREE.DoubleSide })));
+    if (M.radius) {
+      // feine dunkle Kanten wie bei einem Architekturmodell
+      const edges = new THREE.LineSegments(new THREE.EdgesGeometry(g, 25),
+        new THREE.LineBasicMaterial({ color: COLORS.edge, transparent: true, opacity: 0.45 }));
+      scene.add(edges);
+    }
   }
 }
 
 // ---------- Bewuchs aus dem nDOM ----------
+function buildTrees() {
+  // Einzelbäume aus dem nDOM: Krone als zwei weiche Klumpen, Stamm bis in die Krone; dazu Büsche und Hecken
+  const m = new THREE.Matrix4(), c = new THREE.Color(), q = new THREE.Quaternion(), e = new THREE.Euler();
+  const rnd = (i, k) => { const v = Math.sin(i * 127.1 + k * 311.7) * 43758.5453; return v - Math.floor(v); };
+  const crown = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 1), mat(0xffffff), M.trees.length * 2);
+  const trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.7, 1, 1, 7), mat(COLORS.trunk), M.trees.length);
+  M.trees.forEach(([x, z, g, bottom, top, r], i) => {
+    const hh = Math.max(1.5, top - bottom);
+    const cy = g + bottom + hh * 0.5;
+    e.set(0, rnd(i, 1) * 6, 0); q.setFromEuler(e);
+    m.compose(new THREE.Vector3(x, cy, z), q, new THREE.Vector3(r, hh * 0.62, r * 0.92));
+    crown.setMatrixAt(2 * i, m);
+    c.setHex(COLORS.crowns[Math.floor(rnd(i, 2) * COLORS.crowns.length)]);
+    crown.setColorAt(2 * i, c);
+    const a = rnd(i, 3) * 6.28;
+    m.compose(new THREE.Vector3(x + Math.cos(a) * r * 0.35, cy + hh * 0.2, z + Math.sin(a) * r * 0.35), q,
+      new THREE.Vector3(r * 0.7, hh * 0.42, r * 0.7));
+    crown.setMatrixAt(2 * i + 1, m);
+    c.offsetHSL(0, 0, 0.04);
+    crown.setColorAt(2 * i + 1, c);
+    const th = bottom + hh * 0.35, tr = 0.1 + top * 0.011;
+    m.compose(new THREE.Vector3(x, g + th / 2 - 0.2, z), new THREE.Quaternion(), new THREE.Vector3(tr, th, tr));
+    trunks.setMatrixAt(i, m);
+  });
+  add(crown); add(trunks);
+  const bush = new THREE.InstancedMesh(new THREE.DodecahedronGeometry(1, 0), mat(0xffffff), M.bushes.length);
+  M.bushes.forEach(([x, z, g, v], i) => {
+    e.set(rnd(i, 4), rnd(i, 5) * 6, 0); q.setFromEuler(e);
+    m.compose(new THREE.Vector3(x, g + v * 0.5, z), q, new THREE.Vector3(1.1, Math.max(0.55, v * 0.5), 1.1));
+    bush.setMatrixAt(i, m);
+    c.setHex(COLORS.bush[Math.floor(rnd(i, 6) * COLORS.bush.length)]);
+    bush.setColorAt(i, c);
+  });
+  add(bush);
+}
+
 function buildVegetation() {
+  if (M.trees) return buildTrees();
   const v = M.vegetation;
   const leaves = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), mat(0xffffff), v.length);
   const m = new THREE.Matrix4(), c = new THREE.Color();
@@ -584,6 +673,7 @@ function update(dt) {
     if (p.y <= g + EYE) { p.y = g + EYE; player.vy = 0; player.onGround = true; }
   }
   camera.position.copy(p);
+  if (skyMesh) skyMesh.position.set(p.x, 0, p.z);      // Himmel wandert mit, damit er nie abgeschnitten wird
   camera.rotation.set(player.pitch, player.yaw, 0);
   const heading = ((-player.yaw / DEG) % 360 + 360) % 360;
   $('pos').textContent = `${(p.y - EYE + M.base).toFixed(1)} m ü. NHN · Blick ${Math.round(heading)}°`;
