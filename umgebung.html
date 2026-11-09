@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Am See 16 und Umgebung</title>
+<link rel="stylesheet" href="css/style.css?v=11">
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body class="umgebung">
+<canvas id="scene"></canvas>
+
+<div id="hud">
+  <div id="title">Pinnow · Am See 16 und Umgebung</div>
+  <div id="pos"></div>
+</div>
+
+<canvas id="minimap" width="200" height="200" title="Grundstück von oben – Klick: dorthin gehen"></canvas>
+
+<div id="toolbar">
+  <button id="btn-overview" title="Übersicht von oben (U)">⬚ Übersicht</button>
+  <button id="btn-fly" title="Fliegen ein/aus (F)">🕊 Fliegen</button>
+  <button id="btn-home" title="Zum Startpunkt (H)">🏠</button>
+  <button id="btn-help" title="Hilfe">?</button>
+  <a class="btn" href="./" title="Zur Auswahl">☰</a>
+</div>
+
+<div id="start" class="panel">
+  <div id="sites">
+    <button data-ort="16">Start: Am See 16</button>
+    <button data-ort="89">Start: Flurstück 89</button>
+  </div>
+  <h1 id="site-title">Pinnow · Am See 16</h1>
+  <p>Das Haus mit 100 m Umgebung bis zum See, gebaut aus amtlichen Messdaten und den eigenen Fotos. Oben wählst du, wo du startest.</p>
+  <div id="loading">Lade Daten …</div>
+  <div id="help">
+    <p><b>Computer:</b> Klicken, dann mit der Maus umsehen. <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> gehen, <kbd>Shift</kbd> rennen, <kbd>F</kbd> fliegen (<kbd>Leertaste</kbd>/<kbd>C</kbd> hoch/runter), <kbd>H</kbd> zum Startpunkt, <kbd>U</kbd> Übersicht, <kbd>Esc</kbd> Maus freigeben.</p>
+    <p><b>Handy/Tablet:</b> links ziehen = gehen, rechts ziehen = umsehen.</p>
+  </div>
+  <button id="btn-start" disabled>Losgehen</button>
+  <p class="small"><a href="./">← Zur Auswahl</a> · <a href="welt.html">Weltkarte</a></p>
+</div>
+
+<div id="joystick"><div id="stick"></div></div>
+<div id="attribution">Daten: © GeoBasis-DE/M-V 2026, © OpenStreetMap-Mitwirkende, <a href="https://www.geoportal-mv.de" target="_blank" rel="noopener">GeoPortal.MV</a> · 3D: three.js</div>
+
+<script type="module" src="js/area.js?v=2"></script>
+</body>
+</html>

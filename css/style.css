@@ -59,3 +59,4 @@ body.touch #joystick { display: block; }
 a.btn { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
   padding: 6px 10px; text-decoration: none; }
 .panel a { color: var(--accent); }
+body.umgebung #minimap { border-radius: 50%; }
