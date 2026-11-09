@@ -271,6 +271,85 @@ def vegetation(ndom, poly, foot_polys, h):
     return blocks, trunks
 
 
+def trees_from_ndom(ndom, area, foot_polys, roads, h):
+    """Einzelbäume aus dem nDOM: Kronenspitzen (lokale Maxima) als Baummitten, jede Bewuchszelle zur nächsten Spitze;
+    daraus Kronenbreite, -höhe und -unterkante. Was zu niedrig oder zu klein für einen Baum ist, wird Busch/Hecke."""
+    from scipy.ndimage import maximum_filter
+    x0, y0, x1, y1 = [int(v) for v in area.bounds]
+    c0, c1 = x0 - TILE_E, x1 - TILE_E
+    r0, r1 = TILE_N - y1, TILE_N - y0
+    sub = np.array(ndom[r0:r1, c0:c1], float)
+    sub[~np.isfinite(sub) | (sub > 60)] = 0
+    E = TILE_E + c0 + np.arange(sub.shape[1]) + 0.5
+    N = TILE_N - r0 - np.arange(sub.shape[0]) - 0.5
+    EE, NN = np.meshgrid(E, N)
+    houses = unary_union([Polygon(f).buffer(0.8) for f in foot_polys]) if foot_polys else Polygon()
+    from shapely import contains_xy
+    mask = contains_xy(area, EE, NN) & ~contains_xy(houses, EE - E0, N0 - NN)
+    mask &= ~(contains_xy(roads, EE, NN) & (sub < 4.0))      # Autos auf der Straße
+    veg = mask & (sub >= 1.5)
+    peaks = veg & (sub >= 4.0) & (sub == maximum_filter(sub, size=5))
+    pr, pc = np.nonzero(peaks)
+    # Zellen der nächsten Spitze zuordnen (höchstens 7 m entfernt, nicht höher als die Spitze)
+    rr, cc = np.nonzero(veg)
+    trees, bushes = [], []
+    owner = -np.ones(len(rr), int)
+    if len(pr):
+        from scipy.spatial import cKDTree
+        d, k = cKDTree(np.c_[pr, pc]).query(np.c_[rr, cc], distance_upper_bound=7.0)
+        ok = np.isfinite(d) & (sub[rr, cc] >= 2.5)
+        owner[ok] = k[ok]
+    for t in range(len(pr)):
+        sel = owner == t
+        hs = sub[rr[sel], cc[sel]]
+        top = float(sub[pr[t], pc[t]])
+        if sel.sum() < 4:
+            owner[sel] = -1
+            continue
+        ce, cn = float(E[cc[sel]].mean()), float(N[rr[sel]].mean())
+        rad = float(np.clip(np.sqrt(sel.sum() / np.pi), 1.2, 9.0))
+        bottom = float(np.clip(np.percentile(hs, 15) * 0.8, 1.2, top - 1.5))
+        g = float(h(ce, cn))
+        x, z = loc(ce, cn)
+        trees.append([x, z, round(g - BASE, 2), round(bottom, 1), round(top, 1), round(rad, 1)])
+    # Rest: Büsche und Hecken als 2-m-Klumpen
+    rest = np.zeros_like(veg)
+    rest[rr[owner < 0], cc[owner < 0]] = True
+    for i in range(0, sub.shape[0] - 1, 2):
+        for j in range(0, sub.shape[1] - 1, 2):
+            w = rest[i:i + 2, j:j + 2]
+            if w.sum() < 2:
+                continue
+            v = float(sub[i:i + 2, j:j + 2][w].max())
+            ce, cn = float(E[j] + 0.5), float(N[i] - 0.5)
+            x, z = loc(ce, cn)
+            bushes.append([x, z, round(float(h(ce, cn)) - BASE, 2), round(min(v, 6.0), 1)])
+    return trees, bushes
+
+
+def ground_classes(verts, dop, box, road, foot):
+    """Bodenart je Geländepunkt aus der Farbe des Luftbilds: 0 Rasen, 1 trockene Wiese, 2 Erde/Sand, 3 Pflaster.
+    Nur die Klasse wird gespeichert, das Luftbild selbst nicht."""
+    x0, y0, x1, y1 = box
+    k = dop.shape[1] / (x1 - x0)
+    out = []
+    for x, _, z in verts:
+        e, n = E0 + x, N0 - z
+        c, r = int((e - x0) * k), int((y1 - n) * k)
+        win = dop[max(0, r - 4):r + 5, max(0, c - 4):c + 5].reshape(-1, 3).astype(float)
+        R, G, B = np.median(win, 0) if len(win) else (0, 0, 0)
+        if G > R + 6 and G > B + 6:
+            cls = 0 if G - R > 14 else 1
+        elif abs(R - G) < 12 and abs(G - B) < 14 and R > 110:
+            cls = 3
+        elif R > G:
+            cls = 2
+        else:
+            cls = 1
+        out.append(cls)
+    return out
+
+
 def vegetation_coarse(ndom, area, parcel, foot_polys, roads, h):
     """Für den 100-m-Umkreis: im Flurstück 1-m-Blöcke wie bei den anderen Dioramen, außerhalb 2-m-Blöcke
     (höchster Wert der vier nDOM-Pixel), damit es auch auf dem Handy flüssig bleibt. Autos auf der Straße fallen weg."""
@@ -508,9 +587,11 @@ def build_site(key, site, a, h, ndom, gml):
         side = road.buffer(2.6).difference(road).intersection(parcel.buffer(5)).difference(
             unary_union([Polygon(b["_g"]) for b in bld])).intersection(poly.buffer(-0.3))
         foot = unary_union([foot, side])
-        blocks, trunks = vegetation_coarse(ndom, poly, parcel, [b["foot"] for b in bld], road, h)
+        blocks, trunks = [], []
+        trees, bushes = trees_from_ndom(ndom, poly, [b["foot"] for b in bld], unary_union([road, foot]), h)
+        ground["cls"] = ground_classes(ground["verts"], dop, box, road, foot)
         objs = street_objects(h, bld, parcel, road, lines)
-        extra = {"roads": drape(road, h, 0.06), "walks": drape(foot, h, 0.1), "radius": site["radius"],
+        extra = {"trees": trees, "bushes": bushes, "roads": drape(road, h, 0.06), "walks": drape(foot, h, 0.1), "radius": site["radius"],
                  "attributionOsm": "Straßen © OpenStreetMap-Mitwirkende (ODbL)"}
     else:
         ground = surface(poly, h)
