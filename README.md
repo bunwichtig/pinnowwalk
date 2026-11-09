@@ -7,8 +7,12 @@
   Farben des Luftbilds abgeleitet; das Luftbild selbst wird nicht gezeigt). Die Karte liegt in 1-km-Kacheln unter
   `data/welt/`; geladen wird nur der Umkreis von 3 km, Bäume bis 1,5 km. Erzeugt mit `python3 tools/build_world.py`.
 - **Am See 16 mit Umgebung** (`umgebung.html`, `js/area.js`): das Haus mit 100 m Umkreis bis zum See, alle
-  LoD2-Häuser, Kiefern aus dem nDOM (Lage, Höhe und Kronenbreite gemessen), Weg „Am See“ (OSM), Ufer, Steg und die
-  Dinge von den Fotos. Startpunkte 16 oder 89 (`?ort=89`). Erzeugt mit `python3 tools/build_area.py` → `data/umgebung.json`.
+  LoD2-Häuser, Bewuchs aus dem nDOM als Blöcke an der gemessenen Kronenoberfläche (wie bei der Dorfstraße 2), Weg
+  „Am See“ (OSM), Ufer mit Schilf, Steg und die Dinge von den Fotos. Dachfarben und Baumfarben aus dem Luftbild
+  abgeleitet, Bodenarten (Wiese, trockene Wiese, offener Boden, Sandweg) ebenfalls; das Luftbild selbst wird nicht
+  gezeigt. Nach den Fotos: eigenes Haus dunkelbraunes Holz mit dunklen Schindeln, Wohnhäuser cremegelbe
+  Holzverschalung, Schuppen dunkelbraune Bretter, Kiefern mit oranger Rinde oben, Lattenzaun zum Sandweg,
+  Bretterzaun zum Nachbarn, Baustelle auf der 89. Startpunkte 16 oder 89 (`?ort=89`). Erzeugt mit `python3 tools/build_area.py` → `data/umgebung.json`.
 - **Dioramen** (`diorama.html?ort=16`, `?ort=89` bzw. `?ort=dorf2`), siehe unten.
 
 ### Dorfstraße 2 (`?ort=dorf2`)

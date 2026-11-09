@@ -11,15 +11,17 @@ const isTouch = matchMedia('(pointer: coarse)').matches;
 if (isTouch) document.body.classList.add('touch');
 
 const COLORS = {
-  plinth: 0x6e5a46, plinthDark: 0x4a3c30, water: 0x3f7fa3, trunk: 0x6f5340, trunkPine: 0x9a5f3e,
-  wood: 0xb08a63, concrete: 0xc9c6bf, boat: 0xffffff, bed: 0x7d5f45, stone: 0xb0aaa0, roofSheet: 0xa9b0b5,
-  walls: [0xf3eee4, 0xefe6d2, 0xe9e2d6, 0xd9c7a8, 0x8a6a4e, 0x6b4f3a],
-  roofs: [0x4b4f55, 0x5d4a40, 0x8c4a3a, 0x6f7378, 0x3f4247],
-  leaves: [0x4f7a3a, 0x5b8743, 0x46703a, 0x67904b, 0x3f6634],
+  plinth: 0x6e5a46, plinthDark: 0x4a3c30, water: 0x4d7f9c, trunk: 0x6b5a4c, trunkPine: 0xb8693c,
+  wood: 0x9b958a, concrete: 0xc9c6bf, boat: 0xffffff, bed: 0x7d5f45, stone: 0xb0aaa0, roofSheet: 0xa3a596,
+  // Wände nach den Fotos: eigenes Haus und Schuppen dunkelbraune Bretter, Wohnhäuser cremegelbe Holzverschalung
+  walls: { ownwood: 0x5e4633, shed: 0x4f3b2c, cream: 0xe4cf98, creamlight: 0xeee0b6, salmon: 0xe6c09d, white: 0xece8de },
   bush: [0x6f9a4c, 0x7ba657, 0x5f8a44],
+  reed: 0xffffff, reeds: [0x7d8a45, 0x6f7f3e, 0x8f9450],
+  fencePost: 0x7d6a55, lattice: 0x8e7a63, plank: 0xb0703f,
 };
 // Bodenfarben je Bodenart aus build_area.py
-const COVER = { g: [0.40, 0.56, 0.25], f: [0.36, 0.37, 0.22], s: [0.76, 0.67, 0.47], r: [0.80, 0.69, 0.50], w: [0.36, 0.42, 0.30] };
+const COVER = { g: [0.40, 0.56, 0.25], d: [0.58, 0.60, 0.36], f: [0.38, 0.35, 0.22], b: [0.50, 0.38, 0.27],
+  s: [0.74, 0.66, 0.47], r: [0.68, 0.53, 0.41], w: [0.36, 0.42, 0.30] };
 
 // ---------- Renderer, Szene, Licht ----------
 const renderer = new THREE.WebGLRenderer({ canvas: $('scene'), antialias: true });
@@ -51,7 +53,7 @@ camera.rotation.order = 'YXZ';
   scene.add(new THREE.Mesh(g, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false })));
 }
 
-scene.add(new THREE.HemisphereLight(0xd6e6ff, 0x5b4a36, 1.25));
+scene.add(new THREE.HemisphereLight(0xd6e6ff, 0x8a7a5c, 1.45));
 const sun = new THREE.DirectionalLight(0xfff0d8, 2.8);
 sun.position.set(-90, 120, 110);          // Nachmittagssonne aus Südwest
 sun.castShadow = true;
@@ -89,8 +91,9 @@ async function load() {
   H = Float32Array.from(M.heights, (v) => v / 100);
   buildGround();
   buildWater();
-  M.buildings.forEach(buildHouse);
-  buildTrees();
+  M.buildings.forEach((b) => buildHouse(b));
+  buildVegetation();
+  buildFences();
   buildPhotoObjects();
   buildParcels();
   renderer.shadowMap.needsUpdate = true;
@@ -183,10 +186,9 @@ function buildWater() {
   scene.add(water);
 }
 
-// ---------- Häuser aus LoD2 ----------
-function buildHouse(b, n) {
-  const pal = [[COLORS.walls[n % COLORS.walls.length], 'wall'], [COLORS.roofs[(n * 7 + 3) % COLORS.roofs.length], 'roof']];
-  for (const [color, key] of pal) {
+// ---------- Häuser aus LoD2: Dach in der Farbe aus dem Luftbild, Wände nach den Fotos ----------
+function buildHouse(b) {
+  for (const [color, key] of [[COLORS.walls[b.wallTone] ?? COLORS.walls.cream, 'wall'], [new THREE.Color(b.roofRGB), 'roof']]) {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(b[key], 3));
     g.computeVertexNormals();
@@ -195,54 +197,67 @@ function buildHouse(b, n) {
   solids.push(b.foot);
 }
 
-// ---------- Bäume und Büsche aus dem nDOM ----------
-function crownGeometry(detail, seed) {
-  const g = new THREE.IcosahedronGeometry(1, detail);
-  const p = g.attributes.position;
-  for (let i = 0; i < p.count; i++) {
-    const s = 0.85 + rnd(seed + p.getX(i) * 13 + p.getY(i) * 7 + p.getZ(i) * 3) * 0.3;
-    p.setXYZ(i, p.getX(i) * s, p.getY(i) * s, p.getZ(i) * s);
-  }
-  g.computeVertexNormals();
-  return g;
+// ---------- Bewuchs aus dem nDOM: Blöcke an der gemessenen Kronenoberfläche, je Baum eine Farbe ----------
+function buildVegetation() {
+  const m = new THREE.Matrix4(), c = new THREE.Color();
+  const blocks = add(new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), mat(0xffffff), M.blocks.length));
+  M.blocks.forEach(([x, z, y, thick, size, t], k) => {
+    const s = size * 0.97;
+    m.makeScale(s, thick, s).setPosition(x, y + thick / 2, z);
+    blocks.setMatrixAt(k, m);
+    c.set(t ? M.treeColors[t] : COLORS.bush[k % COLORS.bush.length]);
+    c.offsetHSL(0, 0, (rnd(k) - 0.5) * 0.05);
+    blocks.setColorAt(k, c);
+  });
+  // Kiefernstämme: unten graubraune Borke, oben die orange Spiegelrinde (Fotos)
+  const geo = new THREE.CylinderGeometry(0.8, 1, 1, 7);
+  const low = add(new THREE.InstancedMesh(geo, mat(COLORS.trunk), M.trunks.length));
+  const high = add(new THREE.InstancedMesh(geo, mat(COLORS.trunkPine), M.trunks.length));
+  M.trunks.forEach(([x, z, y0, y1, r], k) => {
+    const split = y0 + (y1 - y0) * 0.55;
+    m.makeScale(r, split - y0, r).setPosition(x, (y0 + split) / 2, z);
+    low.setMatrixAt(k, m);
+    m.makeScale(r * 0.8, y1 - split, r * 0.8).setPosition(x, (split + y1) / 2, z);
+    high.setMatrixAt(k, m);
+  });
+  // Schilf am Ufer
+  const reeds = new THREE.InstancedMesh(new THREE.ConeGeometry(0.22, 1, 5, 1, true), mat(COLORS.reed, { side: THREE.DoubleSide }), M.reeds.length);
+  M.reeds.forEach(([x, z], k) => {
+    const g = Math.max(terrainHeight(x, z) ?? M.water, M.water - 0.1), h = 1.3 + rnd(k * 3) * 0.8;
+    m.makeScale(0.7 + rnd(k) * 0.5, h, 0.7 + rnd(k + 9) * 0.5).setPosition(x + rnd(k * 7) - 0.5, g + h / 2, z + rnd(k * 5) - 0.5);
+    reeds.setMatrixAt(k, m);
+    reeds.setColorAt(k, c.setHex(COLORS.reeds[k % COLORS.reeds.length]));
+  });
+  reeds.castShadow = true;
+  scene.add(reeds);
 }
-function buildTrees() {
-  const T = M.trees, m = new THREE.Matrix4(), q = new THREE.Quaternion(), c = new THREE.Color();
-  const variants = [crownGeometry(1, 1), crownGeometry(1, 2), crownGeometry(1, 3)];
-  // Kiefernkronen: flache, unregelmäßige Wolke aus zwei bis drei Ballen oben am Stamm
-  const blobs = variants.map(() => []);
-  T.forEach(([x, z, g, top, r, depth], k) => {
-    const hy = Math.max(0.9, depth * 0.3), col = COLORS.leaves[Math.floor(rnd(x + z * 7) * COLORS.leaves.length)];
-    blobs[k % 3].push([x, g + top - hy, z, r, hy, col]);
-    const n = r > 2.2 ? 2 : 1;
-    for (let b = 0; b < n; b++) {
-      const a = rnd(k * 5 + b) * 6.28, d = r * 0.45;
-      blobs[(k + b + 1) % 3].push([x + Math.cos(a) * d, g + top - hy * (1.5 + b * 0.4), z + Math.sin(a) * d, r * 0.62, hy * 0.75, col]);
+
+// ---------- Zäune nach den Fotos ----------
+function buildFences() {
+  const posts = [], slats = [], panels = [];
+  for (const f of M.fences) {
+    const pts = f.pts;
+    for (let k = 0; k < pts.length; k++) {
+      posts.push(pts[k]);
+      if (k === pts.length - 1) continue;
+      const [x1, z1, y1] = pts[k], [x2, z2, y2] = pts[k + 1];
+      const L = Math.hypot(x2 - x1, z2 - z1), yaw = Math.atan2(x2 - x1, z2 - z1);
+      if (f.kind === 'brett') panels.push([(x1 + x2) / 2, (y1 + y2) / 2, (z1 + z2) / 2, L, yaw]);
+      else for (let s = 0.25; s < L; s += 0.35) for (const dir of [1, -1]) slats.push([x1 + (x2 - x1) * s / L, (y1 + y2) / 2, z1 + (z2 - z1) * s / L, yaw, dir]);
     }
+  }
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), one = new THREE.Vector3(1, 1, 1);
+  const P = add(new THREE.InstancedMesh(new THREE.BoxGeometry(0.09, 1.4, 0.09), mat(COLORS.fencePost), posts.length));
+  posts.forEach(([x, z, y], k) => P.setMatrixAt(k, m.makeTranslation(x, y + 0.6, z)));
+  const S = add(new THREE.InstancedMesh(new THREE.BoxGeometry(0.03, 1.35, 0.05), mat(COLORS.lattice), slats.length));
+  slats.forEach(([x, y, z, yaw, dir], k) => {
+    q.setFromEuler(e.set(dir * 0.75, yaw, 0, 'YXZ'));
+    S.setMatrixAt(k, m.compose(new THREE.Vector3(x, y + 0.65, z), q, one));
   });
-  blobs.forEach((list, v) => {
-    const crowns = add(new THREE.InstancedMesh(variants[v], mat(0xffffff), list.length));
-    list.forEach(([x, y, z, r, hy, col], k) => {
-      q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), rnd(x * 3 + z) * 6.28);
-      m.compose(new THREE.Vector3(x, y, z), q, new THREE.Vector3(r, hy, r));
-      crowns.setMatrixAt(k, m);
-      crowns.setColorAt(k, c.setHex(col).offsetHSL(0, 0, (rnd(x * 11 + y) - 0.5) * 0.06));
-    });
-  });
-  const trunks = add(new THREE.InstancedMesh(new THREE.CylinderGeometry(0.75, 1, 1, 7), mat(COLORS.trunkPine), T.length));
-  T.forEach(([x, z, g, top, r, depth], k) => {
-    const h = top - Math.max(0.9, depth * 0.3) + 0.3, rad = 0.12 + top * 0.009;
-    m.compose(new THREE.Vector3(x, g - 0.3 + h / 2, z), q.identity(), new THREE.Vector3(rad, h, rad));
-    trunks.setMatrixAt(k, m);
-  });
-  const B = M.bushes;
-  const bushes = add(new THREE.InstancedMesh(crownGeometry(0, 5), mat(0xffffff), B.length));
-  B.forEach(([x, z, g, h], k) => {
-    m.compose(new THREE.Vector3(x, g + h / 2, z), q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), rnd(x + z) * 6),
-      new THREE.Vector3(1.2, h / 2 + 0.2, 1.2));
-    bushes.setMatrixAt(k, m);
-    c.setHex(COLORS.bush[k % COLORS.bush.length]);
-    bushes.setColorAt(k, c);
+  const B = add(new THREE.InstancedMesh(new THREE.BoxGeometry(0.04, 1.6, 1), mat(COLORS.plank), panels.length));
+  panels.forEach(([x, y, z, L, yaw], k) => {
+    q.setFromEuler(e.set(0, yaw, 0));
+    B.setMatrixAt(k, m.compose(new THREE.Vector3(x, y + 0.75, z), q, new THREE.Vector3(1, 1, L)));
   });
 }
 
@@ -547,13 +562,13 @@ function drawMinimap() {
     mapImg = document.createElement('canvas');
     mapImg.width = mapImg.height = s;
     const c = mapImg.getContext('2d'), img = c.createImageData(N, N);
-    const MAP = { g: [150, 178, 112], f: [112, 136, 86], s: [218, 202, 160], r: [226, 208, 168], w: [120, 168, 196], '-': [238, 240, 242] };
+    const MAP = { g: [130, 165, 95], d: [170, 172, 115], f: [120, 112, 80], b: [150, 115, 85], s: [210, 192, 150], r: [190, 150, 120], w: [120, 168, 196], '-': [238, 240, 242] };
     for (let q = 0; q < N * N; q++) img.data.set([...(MAP[M.cover[q]] || MAP['-']), 255], q * 4);
     const tmp = document.createElement('canvas'); tmp.width = tmp.height = N;
     tmp.getContext('2d').putImageData(img, 0, 0);
     c.drawImage(tmp, 0, 0, s, s);
     c.fillStyle = 'rgba(60,90,50,0.55)';
-    for (const [x, z, , , r] of M.trees) { c.beginPath(); c.arc(tx(x), tz(z), Math.max(1, r * k), 0, 7); c.fill(); }
+    for (const [x, z, , , size] of M.blocks) c.fillRect(tx(x - size / 2), tz(z - size / 2), size * k, size * k);
     const poly = (pts, fill, stroke) => {
       c.beginPath();
       pts.forEach(([x, z], i) => (i ? c.lineTo(tx(x), tz(z)) : c.moveTo(tx(x), tz(z))));
